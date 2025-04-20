@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Block Redirects and Prevent Tracking on allmanga.to and other sites
+// @name         Advanced Redirect Blocker for allmanga.to
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Blocks unwanted redirects from allmanga.to to youtu-chan.com (+more sites), preserves original URL path and query, clears local storage, cookies, and prevents tracking.
+// @version      1.4
+// @description  Prevents redirects to blocked domains by intercepting click events and rewriting URLs dynamically.
 // @author       You
 // @match        *://allmanga.to/*
 // @grant        none
@@ -13,109 +13,82 @@
 
     // Define blocked domains
     const blockedDomains = ['youtu-chan.com'];
+    const originalHostname = window.location.hostname;
 
-    // **Original window.open override to block specific domains**
-    const originalWindowOpen = window.open;
-    window.open = function(url) {
-        if (url) {
-            try {
-                const newUrl = new URL(url);
-                if (blockedDomains.some(domain => newUrl.hostname.includes(domain))) {
-                    console.log(`Blocked opening window to ${newUrl.hostname}`);
-                    return null; // Block the redirect, preserving current URL
+    // Function to rewrite URL to original domain
+    function rewriteUrl(url) {
+        try {
+            const urlObj = new URL(url, window.location.origin);
+            if (blockedDomains.some(domain => urlObj.hostname.includes(domain))) {
+                const correctedUrl = `https://${originalHostname}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+                console.log(`Rewrote URL from ${url} to ${correctedUrl}`);
+                return correctedUrl;
+            }
+            return url;
+        } catch (e) {
+            console.log(`Invalid URL: ${url}, error: ${e}`);
+            return window.location.href; // Fallback to current URL
+        }
+    }
+
+    // Intercept click events on the document
+    document.addEventListener('click', function(event) {
+        const target = event.target.closest('a, button, [onclick]');
+        if (target) {
+            // Check for href (anchor tags)
+            if (target.tagName === 'A' && target.href) {
+                const newUrl = rewriteUrl(target.href);
+                if (newUrl !== target.href) {
+                    event.preventDefault(); // Stop original navigation
+                    window.location.href = newUrl; // Navigate to corrected URL
                 }
-            } catch (e) {
-                console.log(`Invalid URL in window.open: ${url}`);
+            }
+            // Check for onclick handlers
+            else if (target.onclick || target.getAttribute('onclick')) {
+                event.preventDefault(); // Prevent default onclick behavior
+                const href = target.getAttribute('href') || window.location.href;
+                const newUrl = rewriteUrl(href);
+                window.location.href = newUrl;
             }
         }
-        return originalWindowOpen.apply(this, arguments);
+    }, true); // Use capture phase to intercept early
+
+    // Monitor dynamically added scripts that might trigger redirects
+    const scriptObserver = new MutationObserver((mutations) => {
+        mutations.forEach((mutation) => {
+            mutation.addedNodes.forEach((node) => {
+                if (node.tagName === 'SCRIPT') {
+                    const src = node.src || '';
+                    if (blockedDomains.some(domain => src.includes(domain))) {
+                        node.remove(); // Remove suspicious scripts
+                        console.log(`Removed script with src: ${src}`);
+                    }
+                }
+            });
+        });
+    });
+    scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
+
+    // Override navigation methods as a fallback
+    const originalPushState = history.pushState;
+    history.pushState = function(state, title, url) {
+        const newUrl = rewriteUrl(url);
+        return originalPushState.call(history, state, title, newUrl);
     };
 
-    // **Original window.open override to block ALL pop-ups (kept as per request)**
-    window.open = function() {
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function(state, title, url) {
+        const newUrl = rewriteUrl(url);
+        return originalReplaceState.call(history, state, title, newUrl);
+    };
+
+    // Block pop-ups and external window openings
+    window.open = function(url) {
+        const newUrl = rewriteUrl(url);
+        if (newUrl === url) {
+            return null; // Block if not rewritten (assumes external intent)
+        }
+        console.log(`Blocked window.open to ${url}`);
         return null;
     };
-
-    // **Original window.location setter override (kept as per request)**
-    Object.defineProperty(window, 'location', {
-        set: function(url) {
-            try {
-                const urlObj = new URL(url);
-                if (blockedDomains.some(domain => urlObj.hostname.includes(domain))) {
-                    console.log(`Blocked redirect to ${url}`);
-                    return; // Prevent the redirect, preserving original URL
-                }
-                window.location.href = url; // Allow non-blocked redirects
-            } catch (e) {
-                console.log(`Invalid URL in location setter: ${url}`);
-            }
-        },
-        get: function() {
-            return window.location;
-        }
-    });
-
-    // **Added window.location.assign override to enhance redirect blocking**
-    const originalAssign = window.location.assign;
-    window.location.assign = function(url) {
-        try {
-            const urlObj = new URL(url);
-            if (blockedDomains.some(domain => urlObj.hostname.includes(domain))) {
-                console.log(`Blocked navigation via assign to ${url}`);
-                return; // Prevent navigation, preserving original URL
-            }
-        } catch (e) {
-            console.log(`Invalid URL in assign: ${url}`);
-        }
-        return originalAssign.call(window.location, url);
-    };
-
-    // **Added window.location.replace override to enhance redirect blocking**
-    const originalReplace = window.location.replace;
-    window.location.replace = function(url) {
-        try {
-            const urlObj = new URL(url);
-            if (blockedDomains.some(domain => urlObj.hostname.includes(domain))) {
-                console.log(`Blocked navigation via replace to ${url}`);
-                return; // Prevent navigation, preserving original URL
-            }
-        } catch (e) {
-            console.log(`Invalid URL in replace: ${url}`);
-        }
-        return originalReplace.call(window.location, url);
-    };
-
-    // **Original code to clear local storage and cookies**
-    if (
-        window.location.hostname.includes('allmanga.to') ||
-        window.location.hostname.includes('drakecomic.org') ||
-        window.location.hostname.includes('lunarscan.org') ||
-        window.location.hostname.includes('xcalibrscans.com')
-    ) {
-        // Clear local storage
-        window.localStorage.clear();
-
-        // Delete all cookies
-        document.cookie.split(";").forEach(function(c) {
-            document.cookie = c.replace(/^ +/, "").replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
-        });
-    }
-
-    // **Original code to unregister service workers**
-    navigator.serviceWorker.getRegistrations().then(function(registrations) {
-        for (let registration of registrations) {
-            registration.unregister();
-        }
-    });
-
-    // **Original code to prevent canvas fingerprinting**
-    HTMLCanvasElement.prototype.toDataURL = function() {
-        return "";
-    };
-
-    // **Original code to stop autoplay videos**
-    const videos = document.getElementsByTagName('video');
-    for (let video of videos) {
-        video.autoplay = false;
-    }
 })();
