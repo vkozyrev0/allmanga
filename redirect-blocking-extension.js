@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to
 // @namespace    http://tampermonkey.net/
-// @version      1.8
+// @version      1.9
 // @description  Prevents redirects to blocked domains by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -273,11 +273,16 @@
         ].join(';');
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
         badge.addEventListener('mouseleave', () => { badge.style.opacity = '0.55'; });
-        // Shield with a check mark
+        // Broken link (unlink) on an orange disc — a severed redirect
         badge.innerHTML =
             '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="' + ICON_SIZE + '" height="' + ICON_SIZE + '" style="pointer-events:none">' +
-            '<path fill="#2e7d32" d="M12 2 4 5v6c0 5 3.4 8.4 8 11 4.6-2.6 8-6 8-11V5l-8-3z"/>' +
-            '<path fill="#ffffff" d="m10.6 14.6-2.3-2.3-1.1 1.1 3.4 3.4 6-6-1.1-1.1z"/>' +
+            '<circle cx="12" cy="12" r="11" fill="#f76707"/>' +
+            '<g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M9 12l-2 2a2.5 2.5 0 0 0 3.5 3.5l2 -2"/>' +
+            '<path d="M15 12l2 -2a2.5 2.5 0 0 0 -3.5 -3.5l-2 2"/>' +
+            '<path d="M6.5 6.5l-1 -1"/>' +
+            '<path d="M18.5 18.5l1 1"/>' +
+            '</g>' +
             '</svg>';
         document.body.appendChild(badge);
 
