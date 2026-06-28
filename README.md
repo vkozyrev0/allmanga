@@ -12,7 +12,7 @@ Some links, scripts, and pop-ups on the site try to send you to a different doma
 - **Removes injected scripts** — a `MutationObserver` watches for `<script>` tags pointing at a blocked domain and removes them before they run.
 - **Guards SPA navigation** — wraps `history.pushState` and `history.replaceState` so client-side route changes can't redirect off-site.
 - **Blocks pop-ups** — overrides `window.open` to cancel any pop-up aimed at a blocked domain, while letting legitimate same-site opens through.
-- **Shows a status badge** — injects a small shield icon in the bottom-right corner so you can see at a glance that the script is active (brightens on hover).
+- **Shows a status badge** — injects a small shield icon in the bottom-right corner so you can see at a glance that the script is active (brightens on hover). Hover for a tooltip showing how many redirects it has blocked — this session and cumulatively. **Drag the badge** to reposition it; its spot is remembered (saved in `localStorage` as an offset from the nearest viewport corner, so it stays put relative to that corner when the window is resized) and restored on the next visit.
 
 Blocked domains are listed in the `blockedDomains` array at the top of the script (currently `youtu-chan.com`).
 
@@ -53,6 +53,6 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.7 |
+| Version | 1.8 |
 | Match | `*://allmanga.to/*` |
 | Grants | none |

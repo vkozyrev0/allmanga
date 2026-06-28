@@ -18,7 +18,8 @@ const SCRIPT_SOURCE = fs.readFileSync(
 
 // Build a fresh allmanga.to page, stub window.open so we can see pass-throughs,
 // load the script, and return handles for assertions.
-function load() {
+// opts.storage seeds localStorage BEFORE the script runs (e.g. saved position).
+function load(opts = {}) {
   const virtualConsole = new VirtualConsole();
   // Assigning window.location.href in jsdom raises a "Not implemented:
   // navigation" jsdomError. That's expected here — swallow it so test output
@@ -32,6 +33,11 @@ function load() {
   });
 
   const { window } = dom;
+
+  // Seed localStorage before the script reads it.
+  for (const [key, value] of Object.entries(opts.storage || {})) {
+    window.localStorage.setItem(key, value);
+  }
 
   // Replace window.open BEFORE loading the script so the script captures this
   // stub as its `originalWindowOpen`. A call reaching the stub == "allowed".
@@ -47,6 +53,20 @@ function load() {
   window.eval(SCRIPT_SOURCE);
 
   return { dom, window, openCalls };
+}
+
+// Simulate a drag of the badge from its current spot by (dx, dy) pixels.
+function dragBadge(window, badge, dx, dy) {
+  const startLeft = parseFloat(badge.style.left) || 0;
+  const startTop = parseFloat(badge.style.top) || 0;
+  badge.dispatchEvent(new window.MouseEvent('mousedown', {
+    bubbles: true, clientX: 500, clientY: 500,
+  }));
+  window.dispatchEvent(new window.MouseEvent('mousemove', {
+    bubbles: true, clientX: 500 + dx, clientY: 500 + dy,
+  }));
+  window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }));
+  return { startLeft, startTop };
 }
 
 // Dispatch a real click on a freshly-created anchor and report whether the
@@ -165,4 +185,111 @@ test('does not inject a duplicate badge', () => {
     window.document.querySelectorAll('#rb-status-icon').length,
     1
   );
+});
+
+// --- blocked-redirect counter ---------------------------------------------
+
+test('tooltip starts at zero blocks', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.match(badge.title, /0 blocked this session \(0 total\)/);
+});
+
+test('tooltip counts each blocked redirect this session', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  window.open('https://youtu-chan.com/a');
+  assert.match(badge.title, /1 blocked this session/);
+  window.history.pushState({}, '', 'https://youtu-chan.com/b');
+  assert.match(badge.title, /2 blocked this session/);
+});
+
+test('total count persists across loads via localStorage', () => {
+  const { window } = load({ storage: { 'rb-blocked-total': '5' } });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.match(badge.title, /\(5 total\)/);
+  window.open('https://youtu-chan.com/a');
+  assert.match(badge.title, /1 blocked this session \(6 total\)/);
+  assert.strictEqual(window.localStorage.getItem('rb-blocked-total'), '6');
+});
+
+// --- draggable badge with remembered position ------------------------------
+// jsdom defaults: innerWidth 1024, innerHeight 768; ICON_SIZE 22, MARGIN 12.
+// So default (bottom-right, inset 12) = left 990 / top 734.
+// Position is stored relative to the nearest corner: { corner, dx, dy }.
+
+test('badge defaults to the bottom-right corner', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.strictEqual(badge.style.left, '990px');
+  assert.strictEqual(badge.style.top, '734px');
+});
+
+test('restores a top-left corner offset', () => {
+  const { window } = load({
+    storage: { 'rb-icon-pos': JSON.stringify({ corner: 'LT', dx: 0, dy: 0 }) },
+  });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.strictEqual(badge.style.left, '0px');
+  assert.strictEqual(badge.style.top, '0px');
+});
+
+test('restores a bottom-right corner offset', () => {
+  const { window } = load({
+    storage: { 'rb-icon-pos': JSON.stringify({ corner: 'RB', dx: 0, dy: 0 }) },
+  });
+  const badge = window.document.getElementById('rb-status-icon');
+  // flush against bottom-right: left = 1024-22, top = 768-22
+  assert.strictEqual(badge.style.left, '1002px');
+  assert.strictEqual(badge.style.top, '746px');
+});
+
+test('dragging saves position relative to the nearest corner', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  dragBadge(window, badge, -400, -300); // from 990,734 -> 590,434
+  assert.strictEqual(badge.style.left, '590px');
+  assert.strictEqual(badge.style.top, '434px');
+
+  // 590,434 is still in the bottom-right quadrant; insets from that corner:
+  // dx = 1024-22-590 = 412, dy = 768-22-434 = 312
+  const saved = JSON.parse(window.localStorage.getItem('rb-icon-pos'));
+  assert.deepStrictEqual(saved, { corner: 'RB', dx: 412, dy: 312 });
+});
+
+test('dragging into the top-left quadrant anchors to that corner', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  dragBadge(window, badge, -900, -700); // 990,734 -> 90,34 (top-left quadrant)
+  const saved = JSON.parse(window.localStorage.getItem('rb-icon-pos'));
+  assert.deepStrictEqual(saved, { corner: 'LT', dx: 90, dy: 34 });
+});
+
+test('a dragged position survives a reload', () => {
+  const first = load();
+  const badge1 = first.window.document.getElementById('rb-status-icon');
+  dragBadge(first.window, badge1, -400, -300);
+  const savedPos = first.window.localStorage.getItem('rb-icon-pos');
+
+  // Simulate a fresh page load carrying the persisted position forward.
+  const second = load({ storage: { 'rb-icon-pos': savedPos } });
+  const badge2 = second.window.document.getElementById('rb-status-icon');
+  assert.strictEqual(badge2.style.left, '590px');
+  assert.strictEqual(badge2.style.top, '434px');
+});
+
+test('keeps its distance from the anchored corner when the viewport shrinks', () => {
+  const { window } = load({
+    storage: { 'rb-icon-pos': JSON.stringify({ corner: 'RB', dx: 12, dy: 12 }) },
+  });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.strictEqual(badge.style.left, '990px'); // 1024-22-12
+
+  window.innerWidth = 800;
+  window.innerHeight = 600;
+  window.dispatchEvent(new window.Event('resize'));
+
+  // Still 12px from the bottom-right corner: left = 800-22-12, top = 600-22-12
+  assert.strictEqual(badge.style.left, '766px');
+  assert.strictEqual(badge.style.top, '566px');
 });
