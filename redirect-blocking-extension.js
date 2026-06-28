@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to
 // @namespace    http://tampermonkey.net/
-// @version      1.6
-// @description  Prevents redirects to blocked domains by intercepting click events and rewriting URLs dynamically.
+// @version      1.7
+// @description  Prevents redirects to blocked domains by intercepting click events and rewriting URLs dynamically. Shows a small status badge while active.
 // @author       You
 // @match        *://allmanga.to/*
 // @grant        none
@@ -100,4 +100,40 @@
         // Allow same-domain opens or pass through to original
         return originalWindowOpen.call(window, newUrl, ...args);
     };
+
+    // Inject a small status badge so it's visible the script is active
+    function injectStatusIcon() {
+        if (document.getElementById('rb-status-icon')) return; // avoid duplicates
+        const badge = document.createElement('div');
+        badge.id = 'rb-status-icon';
+        badge.title = 'Redirect Blocker active';
+        badge.setAttribute('aria-label', 'Redirect Blocker active');
+        badge.style.cssText = [
+            'position:fixed',
+            'bottom:12px',
+            'right:12px',
+            'width:22px',
+            'height:22px',
+            'z-index:2147483647',
+            'opacity:0.55',
+            'cursor:default',
+            'transition:opacity 0.2s ease',
+            'pointer-events:auto'
+        ].join(';');
+        badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
+        badge.addEventListener('mouseleave', () => { badge.style.opacity = '0.55'; });
+        // Shield with a check mark
+        badge.innerHTML =
+            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="22" height="22">' +
+            '<path fill="#2e7d32" d="M12 2 4 5v6c0 5 3.4 8.4 8 11 4.6-2.6 8-6 8-11V5l-8-3z"/>' +
+            '<path fill="#ffffff" d="m10.6 14.6-2.3-2.3-1.1 1.1 3.4 3.4 6-6-1.1-1.1z"/>' +
+            '</svg>';
+        document.body.appendChild(badge);
+    }
+
+    if (document.body) {
+        injectStatusIcon();
+    } else {
+        document.addEventListener('DOMContentLoaded', injectStatusIcon);
+    }
 })();

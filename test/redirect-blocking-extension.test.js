@@ -145,3 +145,24 @@ test('replaceState rewrites a blocked URL back to the original host', () => {
   window.history.replaceState({}, '', 'https://youtu-chan.com/x');
   assert.strictEqual(window.location.href, 'https://allmanga.to/x');
 });
+
+// --- status badge ----------------------------------------------------------
+
+test('injects a status badge containing an SVG icon', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.ok(badge, 'badge element should be present');
+  assert.strictEqual(badge.parentNode, window.document.body);
+  assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
+  assert.match(badge.title, /active/i);
+});
+
+test('does not inject a duplicate badge', () => {
+  const { window } = load();
+  // Re-running the injector must be a no-op (id guard).
+  window.eval(SCRIPT_SOURCE);
+  assert.strictEqual(
+    window.document.querySelectorAll('#rb-status-icon').length,
+    1
+  );
+});
