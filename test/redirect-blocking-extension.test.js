@@ -1,9 +1,10 @@
 'use strict';
 
 // Black-box behavioral tests for the userscript, run against a simulated
-// allmanga.to page via jsdom. The actual, unmodified script is loaded into the
-// page and we assert observable behavior (navigation prevented, scripts removed,
-// pop-ups blocked, history rewrites) rather than reaching into private internals.
+// allmanga.to / mkissa.to page via jsdom. The actual, unmodified script is
+// loaded into the page and we assert observable behavior (navigation prevented,
+// scripts removed, pop-ups blocked, history rewrites) rather than reaching into
+// private internals.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -16,9 +17,10 @@ const SCRIPT_SOURCE = fs.readFileSync(
   'utf8'
 );
 
-// Build a fresh allmanga.to page, stub window.open so we can see pass-throughs,
-// load the script, and return handles for assertions.
-// opts.storage seeds localStorage BEFORE the script runs (e.g. saved position).
+// Build a fresh page on the given host (default allmanga.to), stub window.open
+// so we can see pass-throughs, load the script, and return handles for
+// assertions. opts.storage seeds localStorage BEFORE the script runs
+// (e.g. saved position).
 function load(opts = {}) {
   const virtualConsole = new VirtualConsole();
   // Assigning window.location.href in jsdom raises a "Not implemented:
@@ -26,8 +28,9 @@ function load(opts = {}) {
   // stays clean.
   virtualConsole.on('jsdomError', () => {});
 
+  const pageUrl = opts.url || 'https://allmanga.to/';
   const dom = new JSDOM('<!DOCTYPE html><html><head></head><body></body></html>', {
-    url: 'https://allmanga.to/',
+    url: pageUrl,
     runScripts: 'outside-only',
     virtualConsole,
   });
@@ -164,6 +167,53 @@ test('replaceState rewrites a blocked URL back to the original host', () => {
   const { window } = load();
   window.history.replaceState({}, '', 'https://youtu-chan.com/x');
   assert.strictEqual(window.location.href, 'https://allmanga.to/x');
+});
+
+// --- mkissa.to (same script, different @match host) ------------------------
+
+test('on mkissa.to, allows window.open to that site', () => {
+  const { window, openCalls } = load({ url: 'https://mkissa.to/' });
+  assert.strictEqual(window.open('https://mkissa.to/manga/1'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('on mkissa.to, allows navigation on a same-site link', () => {
+  const { window } = load({ url: 'https://mkissa.to/' });
+  assert.strictEqual(clickAnchor(window, 'https://mkissa.to/manga/42'), false);
+});
+
+test('on mkissa.to, blocks window.open to a blocked domain', () => {
+  const { window, openCalls } = load({ url: 'https://mkissa.to/' });
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
+  assert.strictEqual(openCalls.length, 0, 'original window.open must not run');
+});
+
+test('on mkissa.to, pushState rewrites a blocked URL back to mkissa.to', () => {
+  const { window } = load({ url: 'https://mkissa.to/' });
+  window.history.pushState({}, '', 'https://youtu-chan.com/page?q=1#h');
+  assert.strictEqual(window.location.href, 'https://mkissa.to/page?q=1#h');
+});
+
+test('on mkissa.to, replaceState rewrites a blocked URL back to mkissa.to', () => {
+  const { window } = load({ url: 'https://mkissa.to/' });
+  window.history.replaceState({}, '', 'https://youtu-chan.com/x');
+  assert.strictEqual(window.location.href, 'https://mkissa.to/x');
+});
+
+test('on mkissa.to, leaves a legitimate same-site script in place', async () => {
+  const { window } = load({ url: 'https://mkissa.to/' });
+  const s = window.document.createElement('script');
+  s.src = 'https://mkissa.to/app.js';
+  window.document.documentElement.appendChild(s);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(s.isConnected, true);
+});
+
+test('on mkissa.to, injects the status badge', () => {
+  const { window } = load({ url: 'https://mkissa.to/' });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.ok(badge, 'badge element should be present');
+  assert.match(badge.title, /0 blocked this session \(0 total\)/);
 });
 
 // --- status badge ----------------------------------------------------------

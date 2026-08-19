@@ -1,8 +1,8 @@
 {
   "name": "allmanga-redirect-blocker",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "private": true,
-  "description": "Tampermonkey userscript that blocks redirects on allmanga.to",
+  "description": "Tampermonkey userscript that blocks redirects on allmanga.to and mkissa.to",
   "scripts": {
     "test": "node --test",
     "check": "node --check redirect-blocking-extension.js"

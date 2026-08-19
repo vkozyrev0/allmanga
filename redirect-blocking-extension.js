@@ -1,10 +1,11 @@
 // ==UserScript==
-// @name         Advanced Redirect Blocker for allmanga.to
+// @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.9
-// @description  Prevents redirects to blocked domains by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
+// @version      1.10
+// @description  Prevents redirects to blocked domains on allmanga.to and mkissa.to by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
+// @match        *://mkissa.to/*
 // @grant        none
 // ==/UserScript==
 
