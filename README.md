@@ -53,6 +53,6 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.11 |
+| Version | 1.12 |
 | Match | `*://allmanga.to/*`, `*://mkissa.to/*` |
 | Grants | none |

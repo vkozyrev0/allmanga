@@ -224,6 +224,7 @@ test('injects a status badge containing an SVG icon', () => {
   assert.ok(badge, 'badge element should be present');
   assert.strictEqual(badge.parentNode, window.document.documentElement);
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
+  assert.strictEqual(badge.getAttribute('popover'), 'manual');
   assert.match(badge.title, /active/i);
 });
 

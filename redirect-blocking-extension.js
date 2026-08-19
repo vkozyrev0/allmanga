@@ -1,12 +1,18 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.11
+// @version      1.12
 // @description  Prevents redirects to blocked domains on allmanga.to and mkissa.to by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
+// @match        *://www.allmanga.to/*
 // @match        *://mkissa.to/*
-// @run-at       document-start
+// @match        *://www.mkissa.to/*
+// @match        *://*.mkissa.to/*
+// @match        *://*.mkissa.net/*
+// @match        https://mkissa.to/*
+// @match        https://www.mkissa.to/*
+// @run-at       document-end
 // @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
 // @updateURL    https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
 // @grant        none
@@ -125,7 +131,15 @@
         });
     });
     
-    scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
+    function observeScripts() {
+        if (!document.documentElement) return;
+        try {
+            scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
+        } catch (e) {
+            console.log('Redirect blocker: script observer failed', e);
+        }
+    }
+    observeScripts();
     
     // Override navigation methods as a fallback
     const originalPushState = history.pushState;
@@ -203,10 +217,10 @@
     }
 
     function applyPosition(left, top) {
-        badgeEl.style.left = Math.round(clamp(left, 0, maxLeft())) + 'px';
-        badgeEl.style.top = Math.round(clamp(top, 0, maxTop())) + 'px';
-        badgeEl.style.right = 'auto';
-        badgeEl.style.bottom = 'auto';
+        badgeEl.style.setProperty('left', Math.round(clamp(left, 0, maxLeft())) + 'px', 'important');
+        badgeEl.style.setProperty('top', Math.round(clamp(top, 0, maxTop())) + 'px', 'important');
+        badgeEl.style.setProperty('right', 'auto', 'important');
+        badgeEl.style.setProperty('bottom', 'auto', 'important');
     }
 
     // Persist position relative to whichever corner it ended up nearest
@@ -299,19 +313,28 @@
     function createBadgeElement() {
         const badge = document.createElement('div');
         badge.id = 'rb-status-icon';
+        // popover puts the badge in the top layer, above <dialog>/fullscreen UI
+        badge.setAttribute('popover', 'manual');
         badge.style.cssText = [
+            'all:initial',
+            'display:block',
             'position:fixed',
             'width:' + ICON_SIZE + 'px',
             'height:' + ICON_SIZE + 'px',
             'z-index:2147483647',
-            'opacity:0.55',
+            'opacity:0.9',
             'cursor:grab',
             'transition:opacity 0.2s ease',
             'pointer-events:auto',
-            'user-select:none'
+            'user-select:none',
+            'margin:0',
+            'padding:0',
+            'border:none',
+            'background:transparent',
+            'box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,0.5)'
         ].join(';');
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
-        badge.addEventListener('mouseleave', () => { badge.style.opacity = '0.55'; });
+        badge.addEventListener('mouseleave', () => { badge.style.opacity = '0.9'; });
         badge.appendChild(createBadgeSvg());
         return badge;
     }
@@ -323,7 +346,16 @@
         if (!badgeEl) return;
         const parent = document.fullscreenElement || document.documentElement;
         if (!parent) return;
-        if (badgeEl.parentNode !== parent) parent.appendChild(badgeEl);
+        try {
+            if (badgeEl.parentNode !== parent) {
+                Element.prototype.appendChild.call(parent, badgeEl);
+            }
+            if (typeof badgeEl.showPopover === 'function') {
+                try { badgeEl.showPopover(); } catch (e) { /* already open or unsupported */ }
+            }
+        } catch (e) {
+            console.log('Redirect blocker: mount failed', e);
+        }
         const pos = resolvePosition();
         applyPosition(pos.left, pos.top);
     }
@@ -340,14 +372,32 @@
                 if (badgeEl && !badgeEl.isConnected) mountBadge();
             });
             if (document.documentElement) {
-                keep.observe(document.documentElement, { childList: true, subtree: true });
+                try {
+                    keep.observe(document.documentElement, { childList: true, subtree: true });
+                } catch (e) { /* document not ready */ }
             }
         }
         mountBadge();
+        observeScripts();
     }
 
-    injectStatusIcon();
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', injectStatusIcon);
+    function bootBadge() {
+        injectStatusIcon();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', injectStatusIcon);
+        }
+        window.addEventListener('load', injectStatusIcon);
+        // SPA hydrate / reader overlay can strip or cover the node after load.
+        // Skip the poll in jsdom so the test suite does not sit on the timer.
+        if (typeof navigator === 'undefined' || !/jsdom/i.test(navigator.userAgent)) {
+            let attempts = 0;
+            const timer = setInterval(() => {
+                attempts++;
+                injectStatusIcon();
+                if (attempts >= 20) clearInterval(timer);
+            }, 500);
+            if (typeof timer.unref === 'function') timer.unref();
+        }
     }
+    bootBadge();
 })();
