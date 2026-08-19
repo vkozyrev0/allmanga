@@ -1,7 +1,8 @@
 ! Title: allmanga/mkissa redirect blocker
-! Version: 1.14
+! Version: 1.15
 ! Optional AdGuard user rules (Settings → Ad Blocker → User rules).
 ! The userscript is the main install path.
 ! After changes, reload the page with Ctrl+Shift+R (not Ctrl+F5).
 !
 ||youtu-chan.com^
+||isekai2nd.com^

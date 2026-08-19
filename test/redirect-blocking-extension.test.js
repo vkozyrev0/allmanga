@@ -50,12 +50,36 @@ function load(opts = {}) {
     return 'OPENED';
   };
 
+  // Optional Navigation API stub so we can fire the same event Chromium
+  // emits for location.href = 'https://isekai2nd.com/...' .
+  const navigateListeners = [];
+  if (opts.withNavigation) {
+    window.navigation = {
+      addEventListener(type, fn) {
+        if (type === 'navigate') navigateListeners.push(fn);
+      },
+    };
+  }
+
   // Silence the script's own console.log noise.
   window.console.log = () => {};
 
   window.eval(SCRIPT_SOURCE);
 
-  return { dom, window, openCalls };
+  return { dom, window, openCalls, navigateListeners };
+}
+
+function fireNavigate(listeners, destUrl) {
+  const event = {
+    hashChange: false,
+    downloadRequest: null,
+    cancelable: true,
+    defaultPrevented: false,
+    destination: { url: destUrl },
+    preventDefault() { this.defaultPrevented = true; },
+  };
+  for (const fn of listeners) fn(event);
+  return event;
 }
 
 // Simulate a drag of the badge from its current spot by (dx, dy) pixels.
@@ -157,16 +181,23 @@ test('pushState with a null URL does not throw and keeps the current URL', () =>
   assert.strictEqual(window.location.href, before);
 });
 
-test('pushState rewrites a blocked URL back to the original host', () => {
+test('pushState rewrites an off-site manga path back to the original host', () => {
   const { window } = load();
-  window.history.pushState({}, '', 'https://youtu-chan.com/page?q=1#h');
-  assert.strictEqual(window.location.href, 'https://allmanga.to/page?q=1#h');
+  window.history.pushState({}, '', 'https://youtu-chan.com/manga/page?q=1#h');
+  assert.strictEqual(window.location.href, 'https://allmanga.to/manga/page?q=1#h');
 });
 
-test('replaceState rewrites a blocked URL back to the original host', () => {
+test('replaceState rewrites an off-site manga path back to the original host', () => {
   const { window } = load();
-  window.history.replaceState({}, '', 'https://youtu-chan.com/x');
-  assert.strictEqual(window.location.href, 'https://allmanga.to/x');
+  window.history.replaceState({}, '', 'https://youtu-chan.com/manga/x');
+  assert.strictEqual(window.location.href, 'https://allmanga.to/manga/x');
+});
+
+test('pushState drops an off-site article URL and stays put', () => {
+  const { window } = load();
+  const before = window.location.href;
+  window.history.pushState({}, '', 'https://isekai2nd.com/20-recommended-science-fiction-anime');
+  assert.strictEqual(window.location.href, before);
 });
 
 // --- mkissa.to (same script, different @match host) ------------------------
@@ -188,16 +219,117 @@ test('on mkissa.to, blocks window.open to a blocked domain', () => {
   assert.strictEqual(openCalls.length, 0, 'original window.open must not run');
 });
 
-test('on mkissa.to, pushState rewrites a blocked URL back to mkissa.to', () => {
+test('on mkissa.to, pushState rewrites an off-site manga path back to mkissa.to', () => {
   const { window } = load({ url: 'https://mkissa.to/' });
-  window.history.pushState({}, '', 'https://youtu-chan.com/page?q=1#h');
-  assert.strictEqual(window.location.href, 'https://mkissa.to/page?q=1#h');
+  window.history.pushState({}, '', 'https://youtu-chan.com/manga/page?q=1#h');
+  assert.strictEqual(window.location.href, 'https://mkissa.to/manga/page?q=1#h');
 });
 
-test('on mkissa.to, replaceState rewrites a blocked URL back to mkissa.to', () => {
+test('on mkissa.to, replaceState rewrites an off-site manga path back to mkissa.to', () => {
   const { window } = load({ url: 'https://mkissa.to/' });
-  window.history.replaceState({}, '', 'https://youtu-chan.com/x');
-  assert.strictEqual(window.location.href, 'https://mkissa.to/x');
+  window.history.replaceState({}, '', 'https://youtu-chan.com/manga/x');
+  assert.strictEqual(window.location.href, 'https://mkissa.to/manga/x');
+});
+
+const ISEKAI_HIJACK =
+  'https://isekai2nd.com/20-recommended-science-fiction-anime-introducing-monumental-masterpieces-and-moving-images';
+const MKISSA_CHAPTER =
+  'https://mkissa.to/manga/wpehGDr8dzRkXdf2Y/chapter-325-sub';
+
+test('on mkissa.to, next-page click to isekai2nd.com is cancelled and stays on the chapter', () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  assert.strictEqual(clickAnchor(window, ISEKAI_HIJACK), true);
+  assert.strictEqual(window.location.href, MKISSA_CHAPTER);
+});
+
+test('on mkissa.to, window.open to isekai2nd.com is blocked', () => {
+  const { window, openCalls } = load({ url: MKISSA_CHAPTER });
+  assert.strictEqual(window.open(ISEKAI_HIJACK), null);
+  assert.strictEqual(openCalls.length, 0);
+});
+
+test('on mkissa.to, pushState to the isekai2nd.com article is dropped', () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  window.history.pushState({}, '', ISEKAI_HIJACK);
+  assert.strictEqual(window.location.href, MKISSA_CHAPTER);
+});
+
+test('on mkissa.to, Navigation API cancel keeps the chapter (location.href hijack)', () => {
+  const { window, navigateListeners } = load({
+    url: MKISSA_CHAPTER,
+    withNavigation: true,
+  });
+  assert.ok(navigateListeners.length, 'script should subscribe to navigate');
+  const ev = fireNavigate(navigateListeners, ISEKAI_HIJACK);
+  assert.strictEqual(ev.defaultPrevented, true);
+  assert.strictEqual(window.location.href, MKISSA_CHAPTER);
+});
+
+test('on mkissa.to, Navigation API rewrites a manga-path hijack onto this host', () => {
+  const { window, navigateListeners } = load({
+    url: MKISSA_CHAPTER,
+    withNavigation: true,
+  });
+  const ev = fireNavigate(
+    navigateListeners,
+    'https://youtu-chan.com/manga/wpehGDr8dzRkXdf2Y/chapter-326-sub'
+  );
+  assert.strictEqual(ev.defaultPrevented, true);
+});
+
+test('on mkissa.to, form submit to isekai2nd.com is cancelled', () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  const form = window.document.createElement('form');
+  form.action = ISEKAI_HIJACK;
+  form.method = 'GET';
+  window.document.body.appendChild(form);
+  const ev = new window.Event('submit', { bubbles: true, cancelable: true });
+  form.dispatchEvent(ev);
+  assert.strictEqual(ev.defaultPrevented, true);
+  assert.strictEqual(window.location.href, MKISSA_CHAPTER);
+});
+
+test('on mkissa.to, removes a meta refresh to isekai2nd.com', async () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  const meta = window.document.createElement('meta');
+  meta.httpEquiv = 'refresh';
+  meta.setAttribute('http-equiv', 'refresh');
+  meta.content = '0;url=' + ISEKAI_HIJACK;
+  window.document.head.appendChild(meta);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.strictEqual(meta.isConnected, false);
+});
+
+test('on mkissa.to, still allows a same-site next-chapter link', () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  assert.strictEqual(
+    clickAnchor(window, 'https://mkissa.to/manga/wpehGDr8dzRkXdf2Y/chapter-326-sub'),
+    false
+  );
+});
+
+test('on mkissa.to, allows window.open to allmanga.to (sister host)', () => {
+  const { window, openCalls } = load({ url: 'https://mkissa.to/' });
+  assert.strictEqual(window.open('https://allmanga.to/manga/1'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('blocks window.open to an unlisted off-site host', () => {
+  const { window, openCalls } = load();
+  assert.strictEqual(window.open('https://evil-ads.example/go'), null);
+  assert.strictEqual(openCalls.length, 0);
+});
+
+test('does not cancel a target=_blank off-site social link', () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  const a = window.document.createElement('a');
+  a.href = 'https://discord.gg/xyz';
+  a.target = '_blank';
+  window.document.body.appendChild(a);
+  const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+  a.dispatchEvent(ev);
+  assert.strictEqual(ev.defaultPrevented, false);
+  assert.match(a.href, /discord\.gg/);
 });
 
 test('on mkissa.to, leaves a legitimate same-site script in place', async () => {

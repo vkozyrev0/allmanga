@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.14
-// @description  Prevents redirects to blocked domains on allmanga.to and mkissa.to by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
+// @version      1.15
+// @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
 // @match        *://www.allmanga.to/*
@@ -16,7 +16,7 @@
 // @include      https://www.mkissa.to/*
 // @include      http://mkissa.to/*
 // @include      https://allmanga.to/*
-// @run-at       document-end
+// @run-at       document-start
 // @inject-into  page
 // @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
 // @updateURL    https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
@@ -44,9 +44,11 @@
     }
 
     function boot() {
-    // Define blocked domains
-    const blockedDomains = ['youtu-chan.com'];
+    // Known ad/script hosts. Navigation blocks ANY other host; this list
+    // is only for stripping injected <script> tags (third-party CDNs stay).
+    const blockedDomains = ['youtu-chan.com', 'isekai2nd.com'];
     const originalHostname = W.location.hostname;
+    const allowedHostSuffixes = ['allmanga.to', 'mkissa.to', 'mkissa.net'];
 
     // --- Status / persistence -------------------------------------------------
     const POS_KEY = 'rb-icon-pos';       // saved badge position (viewport ratios)
@@ -92,69 +94,178 @@
         badgeEl.setAttribute('aria-label', label);
     }
 
-    // Function to rewrite URL to original domain
-    function rewriteUrl(url) {
-        // Leave falsy URLs untouched (e.g. history.pushState(state, '', null))
-        if (!url) return url;
+    function hostnameOf(url) {
         try {
-            const urlObj = new URL(url, W.location.origin);
-            if (blockedDomains.some(domain => urlObj.hostname.includes(domain))) {
-                const correctedUrl = `https://${originalHostname}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
-                console.log(`Rewrote URL from ${url} to ${correctedUrl}`);
-                return correctedUrl;
-            }
-            return url;
+            return new URL(String(url), W.location.origin).hostname.toLowerCase();
         } catch (e) {
-            console.log(`Invalid URL: ${url}, error: ${e}`);
-            return url; // Leave unparseable URLs unchanged
+            return '';
         }
     }
-    
-    // Intercept click events on the document
-    D.addEventListener('click', function(event) {
-        const target = event.target.closest('a, button, [onclick]');
-        if (target) {
-            // Check for href (anchor tags)
-            if (target.tagName === 'A' && target.href) {
-                const newUrl = rewriteUrl(target.href);
-                if (newUrl !== target.href) {
-                    event.preventDefault(); // Stop original navigation
-                    recordBlock();
-                    W.location.href = newUrl; // Navigate to corrected URL
-                }
-            }
-            // Check for onclick handlers
-            else if (target.onclick || target.getAttribute('onclick')) {
-                // Only act when an href actually points at a blocked domain
-                const href = target.getAttribute('href');
-                if (href) {
-                    const newUrl = rewriteUrl(href);
-                    if (newUrl !== href) {
-                        event.preventDefault(); // Prevent default onclick behavior
-                        recordBlock();
-                        W.location.href = newUrl;
-                    }
-                }
-            }
+
+    function isAllowedHost(hostname) {
+        const h = String(hostname || '').toLowerCase();
+        if (!h) return true; // about:blank, javascript:, mailto:
+        const orig = originalHostname.toLowerCase();
+        if (h === orig || h === 'www.' + orig || orig === 'www.' + h) return true;
+        if (h.endsWith('.' + orig) || orig.endsWith('.' + h)) return true;
+        return allowedHostSuffixes.some((s) => h === s || h === 'www.' + s || h.endsWith('.' + s));
+    }
+
+    // Paths that still look like this site if they were copied onto an ad host
+    // (e.g. youtu-chan.com/manga/<id>/chapter-326). Article URLs like
+    // isekai2nd.com/20-recommended-... must NOT be rewritten here — that 404s.
+    function looksLikeSitePath(pathname) {
+        if (!pathname || pathname === '/') return false;
+        const p = pathname.toLowerCase();
+        if (['/manga/', '/anime/', '/watch/', '/read/', '/chapter/'].some((pre) => p.startsWith(pre))) {
+            return true;
         }
-    }, true); // Use capture phase to intercept early
-    
-    // Monitor dynamically added scripts that might trigger redirects
+        const cur = W.location.pathname.split('/').filter(Boolean);
+        const dest = pathname.split('/').filter(Boolean);
+        return cur.length >= 2 && dest.length >= 2 && cur[0] === dest[0] && cur[1] === dest[1];
+    }
+
+    // Classify a navigation URL: allow, rewrite onto this host, or block (stay).
+    function decide(url) {
+        if (!url) return { action: 'allow', url: url };
+        try {
+            const urlObj = new URL(String(url), W.location.origin);
+            if (isAllowedHost(urlObj.hostname)) return { action: 'allow', url: url };
+            if (looksLikeSitePath(urlObj.pathname)) {
+                const rewritten = `https://${originalHostname}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+                return { action: 'rewrite', url: rewritten };
+            }
+            return { action: 'block', url: url };
+        } catch (e) {
+            console.log(`Invalid URL: ${url}, error: ${e}`);
+            return { action: 'allow', url: url };
+        }
+    }
+
+    function noteDecision(decision, via, original) {
+        if (decision.action === 'allow') return decision;
+        recordBlock();
+        if (decision.action === 'rewrite') {
+            console.log(`Rewrote ${via} from ${original} to ${decision.url}`);
+        } else {
+            console.log(`Blocked ${via} to ${original}`);
+        }
+        return decision;
+    }
+
+    function hrefOf(el) {
+        if (!el) return '';
+        if (typeof el.href === 'string' && el.href) return el.href;
+        try {
+            const raw = el.getAttribute('href') || (el.href && el.href.baseVal) || '';
+            return raw ? new URL(raw, W.location.origin).href : '';
+        } catch (e) {
+            return '';
+        }
+    }
+
+    function interceptAnchorEvent(event) {
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        const fromPath = path.find((n) => n && (n.tagName === 'A' || n.tagName === 'AREA') && hrefOf(n));
+        const target = (event.target && event.target.closest)
+            ? event.target.closest('a[href], area[href]')
+            : null;
+        const anchor = fromPath || target;
+        if (!anchor) return;
+        const href = hrefOf(anchor);
+        if (!href) return;
+        const decision = decide(href);
+        if (decision.action === 'allow') return;
+        const targetAttr = (anchor.getAttribute('target') || '').toLowerCase();
+        const newTab = event.type === 'auxclick' || event.button === 1
+            || event.ctrlKey || event.metaKey || event.shiftKey
+            || targetAttr === '_blank' || targetAttr === 'blank';
+        // Same-tab off-site is the next-page hijack. New-tab (Discord, etc.) stays.
+        if (newTab && decision.action === 'block') return;
+        event.preventDefault();
+        event.stopPropagation();
+        noteDecision(decision, 'click', href);
+        if (decision.action === 'rewrite') {
+            W.location.href = decision.url;
+        }
+    }
+
+    D.addEventListener('click', interceptAnchorEvent, true);
+    D.addEventListener('auxclick', interceptAnchorEvent, true);
+
+    D.addEventListener('submit', function(event) {
+        const form = event.target;
+        if (!form || !form.action) return;
+        const decision = decide(form.action);
+        if (decision.action === 'allow') return;
+        event.preventDefault();
+        event.stopPropagation();
+        noteDecision(decision, 'form', form.action);
+        if (decision.action === 'rewrite') {
+            form.action = decision.url;
+            try { form.submit(); } catch (e) { /* ignore */ }
+        }
+    }, true);
+
+    function isBlockedScriptSrc(src) {
+        if (!src) return false;
+        const host = hostnameOf(src);
+        return blockedDomains.some((domain) => host.includes(domain) || String(src).includes(domain));
+    }
+
+    function sanitizeMetaRefresh(node) {
+        if (!node || node.tagName !== 'META') return;
+        const equiv = (node.httpEquiv || node.getAttribute('http-equiv') || '').toLowerCase();
+        if (equiv !== 'refresh') return;
+        const content = node.content || node.getAttribute('content') || '';
+        const match = String(content).match(/url\s*=\s*['"]?([^'"\s]+)/i);
+        if (!match) return;
+        const decision = decide(match[1]);
+        if (decision.action === 'allow') return;
+        node.remove();
+        noteDecision(decision, 'meta-refresh', match[1]);
+    }
+
+    function sanitizeAnchor(node) {
+        if (!node || (node.tagName !== 'A' && node.tagName !== 'AREA')) return;
+        const href = hrefOf(node);
+        if (!href) return;
+        const decision = decide(href);
+        // Only rewrite manga-shaped hijacks in the DOM. Leave article/ad hrefs
+        // in place so a target=_blank social link still works; same-tab
+        // navigation is stopped by the click / location / navigate guards.
+        if (decision.action !== 'rewrite') return;
+        node.setAttribute('href', decision.url);
+        noteDecision(decision, 'href', href);
+    }
+
+    function sanitizeNode(node) {
+        if (!node || node.nodeType !== 1) return;
+        if (node.tagName === 'SCRIPT' && isBlockedScriptSrc(node.src)) {
+            node.remove();
+            recordBlock();
+            console.log(`Removed script with src: ${node.src}`);
+            return;
+        }
+        sanitizeMetaRefresh(node);
+        sanitizeAnchor(node);
+    }
+
+    function sanitizeTree(root) {
+        if (!root) return;
+        sanitizeNode(root);
+        if (!root.querySelectorAll) return;
+        root.querySelectorAll('script[src], meta[http-equiv], a[href], area[href]').forEach(sanitizeNode);
+    }
+
     const scriptObserver = new MutationObserver((mutations) => {
         mutations.forEach((mutation) => {
             mutation.addedNodes.forEach((node) => {
-                if (node.tagName === 'SCRIPT') {
-                    const src = node.src || '';
-                    if (blockedDomains.some(domain => src.includes(domain))) {
-                        node.remove(); // Remove suspicious scripts
-                        recordBlock();
-                        console.log(`Removed script with src: ${src}`);
-                    }
-                }
+                sanitizeTree(node);
             });
         });
     });
-    
+
     function observeScripts() {
         if (!D.documentElement) return;
         try {
@@ -162,37 +273,109 @@
         } catch (e) {
             console.log('Redirect blocker: script observer failed', e);
         }
+        sanitizeTree(D);
     }
     observeScripts();
-    
-    // Override navigation methods as a fallback
+
     const originalPushState = W.history.pushState;
     W.history.pushState = function(state, title, url) {
-        const newUrl = rewriteUrl(url);
-        if (newUrl !== url) recordBlock();
-        return originalPushState.call(W.history, state, title, newUrl);
+        const decision = decide(url);
+        if (decision.action === 'block') {
+            noteDecision(decision, 'pushState', url);
+            return;
+        }
+        if (decision.action === 'rewrite') noteDecision(decision, 'pushState', url);
+        return originalPushState.call(W.history, state, title, decision.action === 'rewrite' ? decision.url : url);
     };
 
     const originalReplaceState = W.history.replaceState;
     W.history.replaceState = function(state, title, url) {
-        const newUrl = rewriteUrl(url);
-        if (newUrl !== url) recordBlock();
-        return originalReplaceState.call(W.history, state, title, newUrl);
+        const decision = decide(url);
+        if (decision.action === 'block') {
+            noteDecision(decision, 'replaceState', url);
+            return;
+        }
+        if (decision.action === 'rewrite') noteDecision(decision, 'replaceState', url);
+        return originalReplaceState.call(W.history, state, title, decision.action === 'rewrite' ? decision.url : url);
     };
-    
-    // Block pop-ups and external window openings
+
     const originalWindowOpen = W.open;
     W.open = function(url, ...args) {
-        const newUrl = rewriteUrl(url);
-        // Block when the URL was rewritten (blocked domain detected)
-        if (newUrl !== url) {
-            recordBlock();
-            console.log(`Blocked window.open to ${url}`);
+        const decision = decide(url);
+        if (decision.action !== 'allow') {
+            noteDecision(decision, 'window.open', url);
             return null;
         }
-        // Allow same-domain opens or pass through to original
-        return originalWindowOpen.call(W, newUrl, ...args);
+        return originalWindowOpen.call(W, url, ...args);
     };
+
+    // location.assign / replace / href — next-page hijacks often skip <a> tags.
+    function guardLocationCall(via, url, proceed) {
+        const decision = decide(url);
+        if (decision.action === 'block') {
+            noteDecision(decision, via, url);
+            return;
+        }
+        if (decision.action === 'rewrite') {
+            noteDecision(decision, via, url);
+            return proceed(decision.url);
+        }
+        return proceed(url);
+    }
+
+    function wrapLocationFn(obj, name) {
+        if (!obj) return;
+        try {
+            const orig = obj[name];
+            if (typeof orig !== 'function') return;
+            obj[name] = function(url) {
+                return guardLocationCall('location.' + name, url, (next) => orig.call(this, next));
+            };
+        } catch (e) { /* non-writable in some engines */ }
+    }
+
+    function wrapLocationHref(obj) {
+        if (!obj) return;
+        try {
+            const desc = Object.getOwnPropertyDescriptor(obj, 'href');
+            if (!desc || !desc.set || desc.configurable === false) return;
+            Object.defineProperty(obj, 'href', {
+                configurable: true,
+                enumerable: desc.enumerable,
+                get: desc.get ? function() { return desc.get.call(this); } : undefined,
+                set: function(url) {
+                    guardLocationCall('location.href', url, (next) => desc.set.call(this, next));
+                }
+            });
+        } catch (e) { /* not configurable */ }
+    }
+
+    const LocationProto = W.Location && W.Location.prototype;
+    wrapLocationFn(LocationProto, 'assign');
+    wrapLocationFn(LocationProto, 'replace');
+    wrapLocationHref(LocationProto);
+    wrapLocationFn(W.location, 'assign');
+    wrapLocationFn(W.location, 'replace');
+    wrapLocationHref(W.location);
+
+    // Chromium Navigation API: catches location.href = offsite even when
+    // Location.prototype is frozen. This is what stops mkissa next-page ads.
+    if (W.navigation && typeof W.navigation.addEventListener === 'function') {
+        W.navigation.addEventListener('navigate', (event) => {
+            try {
+                if (event.hashChange || event.downloadRequest) return;
+                const dest = event.destination && event.destination.url;
+                if (!dest) return;
+                const decision = decide(dest);
+                if (decision.action === 'allow') return;
+                if (event.cancelable) event.preventDefault();
+                noteDecision(decision, 'navigate', dest);
+                if (decision.action === 'rewrite') {
+                    try { W.location.replace(decision.url); } catch (e2) { /* ignore */ }
+                }
+            } catch (e) { /* ignore */ }
+        });
+    }
 
     // --- Status badge (draggable, position-remembering) ----------------------
 
