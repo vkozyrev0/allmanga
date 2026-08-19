@@ -224,7 +224,7 @@ test('injects a status badge containing an SVG icon', () => {
   assert.ok(badge, 'badge element should be present');
   assert.strictEqual(badge.parentNode, window.document.documentElement);
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
-  assert.strictEqual(badge.getAttribute('popover'), 'manual');
+  assert.strictEqual(badge.getAttribute('popover'), null);
   assert.match(badge.title, /active/i);
 });
 
@@ -290,14 +290,14 @@ test('total count persists across loads via localStorage', () => {
 
 // --- draggable badge with remembered position ------------------------------
 // jsdom defaults: innerWidth 1024, innerHeight 768; ICON_SIZE 22, MARGIN 12.
-// So default (bottom-right, inset 12) = left 990 / top 734.
+// Default is top-right, inset 12: left 990 / top 12.
 // Position is stored relative to the nearest corner: { corner, dx, dy }.
 
-test('badge defaults to the bottom-right corner', () => {
+test('badge defaults to the top-right corner', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
   assert.strictEqual(badge.style.left, '990px');
-  assert.strictEqual(badge.style.top, '734px');
+  assert.strictEqual(badge.style.top, '12px');
 });
 
 test('restores a top-left corner offset', () => {
@@ -322,35 +322,35 @@ test('restores a bottom-right corner offset', () => {
 test('dragging saves position relative to the nearest corner', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
-  dragBadge(window, badge, -400, -300); // from 990,734 -> 590,434
+  dragBadge(window, badge, -400, 300); // from 990,12 -> 590,312
   assert.strictEqual(badge.style.left, '590px');
-  assert.strictEqual(badge.style.top, '434px');
+  assert.strictEqual(badge.style.top, '312px');
 
-  // 590,434 is still in the bottom-right quadrant; insets from that corner:
-  // dx = 1024-22-590 = 412, dy = 768-22-434 = 312
+  // 590,312 is still in the top-right quadrant; insets from that corner:
+  // dx = 1024-22-590 = 412, dy = 312
   const saved = JSON.parse(window.localStorage.getItem('rb-icon-pos'));
-  assert.deepStrictEqual(saved, { corner: 'RB', dx: 412, dy: 312 });
+  assert.deepStrictEqual(saved, { corner: 'RT', dx: 412, dy: 312 });
 });
 
 test('dragging into the top-left quadrant anchors to that corner', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
-  dragBadge(window, badge, -900, -700); // 990,734 -> 90,34 (top-left quadrant)
+  dragBadge(window, badge, -900, 20); // 990,12 -> 90,32 (top-left quadrant)
   const saved = JSON.parse(window.localStorage.getItem('rb-icon-pos'));
-  assert.deepStrictEqual(saved, { corner: 'LT', dx: 90, dy: 34 });
+  assert.deepStrictEqual(saved, { corner: 'LT', dx: 90, dy: 32 });
 });
 
 test('a dragged position survives a reload', () => {
   const first = load();
   const badge1 = first.window.document.getElementById('rb-status-icon');
-  dragBadge(first.window, badge1, -400, -300);
+  dragBadge(first.window, badge1, -400, 300);
   const savedPos = first.window.localStorage.getItem('rb-icon-pos');
 
   // Simulate a fresh page load carrying the persisted position forward.
   const second = load({ storage: { 'rb-icon-pos': savedPos } });
   const badge2 = second.window.document.getElementById('rb-status-icon');
   assert.strictEqual(badge2.style.left, '590px');
-  assert.strictEqual(badge2.style.top, '434px');
+  assert.strictEqual(badge2.style.top, '312px');
 });
 
 test('keeps its distance from the anchored corner when the viewport shrinks', () => {

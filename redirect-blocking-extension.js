@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.12
+// @version      1.13
 // @description  Prevents redirects to blocked domains on allmanga.to and mkissa.to by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -12,6 +12,10 @@
 // @match        *://*.mkissa.net/*
 // @match        https://mkissa.to/*
 // @match        https://www.mkissa.to/*
+// @include      https://mkissa.to/*
+// @include      https://www.mkissa.to/*
+// @include      http://mkissa.to/*
+// @include      https://allmanga.to/*
 // @run-at       document-end
 // @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
 // @updateURL    https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
@@ -206,14 +210,15 @@
     }
 
     // Resolve the badge's pixel position: saved corner-relative offset if
-    // present, else default to the bottom-right corner. Returns { left, top }.
+    // present, else default to the top-right corner. Returns { left, top }.
     function resolvePosition() {
         const saved = storageGet(POS_KEY, null, JSON.parse);
         if (saved && typeof saved.corner === 'string'
             && typeof saved.dx === 'number' && typeof saved.dy === 'number') {
             return positionFor(saved.corner, saved.dx, saved.dy);
         }
-        return positionFor('RB', ICON_MARGIN, ICON_MARGIN);
+        // Top-right: manga readers put next/prev chrome in the bottom-right
+        return positionFor('RT', ICON_MARGIN, ICON_MARGIN);
     }
 
     function applyPosition(left, top) {
@@ -313,16 +318,16 @@
     function createBadgeElement() {
         const badge = document.createElement('div');
         badge.id = 'rb-status-icon';
-        // popover puts the badge in the top layer, above <dialog>/fullscreen UI
-        badge.setAttribute('popover', 'manual');
+        // Do not use the popover attribute: UA CSS is `display:none !important`
+        // until showPopover() succeeds, and AdGuard's page world often has no
+        // Popover API — the icon would exist in the DOM but stay invisible.
         badge.style.cssText = [
-            'all:initial',
             'display:block',
             'position:fixed',
             'width:' + ICON_SIZE + 'px',
             'height:' + ICON_SIZE + 'px',
             'z-index:2147483647',
-            'opacity:0.9',
+            'opacity:1',
             'cursor:grab',
             'transition:opacity 0.2s ease',
             'pointer-events:auto',
@@ -333,8 +338,12 @@
             'background:transparent',
             'box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,0.5)'
         ].join(';');
+        badge.style.setProperty('display', 'block', 'important');
+        badge.style.setProperty('visibility', 'visible', 'important');
+        badge.style.setProperty('position', 'fixed', 'important');
+        badge.style.setProperty('z-index', '2147483647', 'important');
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
-        badge.addEventListener('mouseleave', () => { badge.style.opacity = '0.9'; });
+        badge.addEventListener('mouseleave', () => { badge.style.opacity = '1'; });
         badge.appendChild(createBadgeSvg());
         return badge;
     }
@@ -349,9 +358,6 @@
         try {
             if (badgeEl.parentNode !== parent) {
                 Element.prototype.appendChild.call(parent, badgeEl);
-            }
-            if (typeof badgeEl.showPopover === 'function') {
-                try { badgeEl.showPopover(); } catch (e) { /* already open or unsupported */ }
             }
         } catch (e) {
             console.log('Redirect blocker: mount failed', e);
