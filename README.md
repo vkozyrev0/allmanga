@@ -29,7 +29,7 @@ mkissa.to is on Cloudflare and prefers **HTTP/3 (QUIC)**. Chrome will not let Ad
 5. On the mkissa tab: puzzle-piece menu → this extension → **This can read and change site data** → **On mkissa.to** (or On all sites). “On click” will not inject on reload.
 6. Click the extension icon once on the chapter page, then hard-reload.
 
-You should see an **8px orange bar across the top** and a **36px “RB” disc** in the top-right. Those come from an isolated-world script (page CSP cannot block it). The previous build used `world: MAIN`, which Cloudflare’s CSP can silently kill.
+You should see an **8px orange bar across the top** and a **36px “RB” disc** in the top-right. Drag the disc to move it; the spot is stored as an offset from the nearest viewport corner so it returns there on the next visit and on resize. Those come from an isolated-world script (page CSP cannot block it). The previous build used `world: MAIN`, which Cloudflare’s CSP can silently kill.
 
 The extension also blocks `youtu-chan.com` at the network layer.
 
