@@ -345,7 +345,7 @@ test('on mkissa.to, injects the status badge', () => {
   const { window } = load({ url: 'https://mkissa.to/' });
   const badge = window.document.getElementById('rb-status-icon');
   assert.ok(badge, 'badge element should be present');
-  assert.match(badge.title, /0 blocked this session \(0 total\)/);
+  assert.match(badge.getAttribute('aria-label'), /0 blocked this session \(0 total\)/);
 });
 
 // --- status badge ----------------------------------------------------------
@@ -357,7 +357,7 @@ test('injects a status badge containing an SVG icon', () => {
   assert.strictEqual(badge.parentNode, window.document.documentElement);
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
   assert.strictEqual(badge.getAttribute('popover'), null);
-  assert.match(badge.title, /active/i);
+  assert.match(badge.getAttribute('aria-label'), /active/i);
   assert.strictEqual(window.document.getElementById('rb-status-bar'), null);
 });
 
@@ -410,24 +410,24 @@ test('does not inject a duplicate badge', () => {
 test('tooltip starts at zero blocks', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
-  assert.match(badge.title, /0 blocked this session \(0 total\)/);
+  assert.match(badge.getAttribute('aria-label'), /0 blocked this session \(0 total\)/);
 });
 
 test('tooltip counts each blocked redirect this session', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
   window.open('https://youtu-chan.com/a');
-  assert.match(badge.title, /1 blocked this session/);
+  assert.match(badge.getAttribute('aria-label'), /1 blocked this session/);
   window.history.pushState({}, '', 'https://youtu-chan.com/b');
-  assert.match(badge.title, /2 blocked this session/);
+  assert.match(badge.getAttribute('aria-label'), /2 blocked this session/);
 });
 
 test('total count persists across loads via localStorage', () => {
   const { window } = load({ storage: { 'rb-blocked-total': '5' } });
   const badge = window.document.getElementById('rb-status-icon');
-  assert.match(badge.title, /\(5 total\)/);
+  assert.match(badge.getAttribute('aria-label'), /\(5 total\)/);
   window.open('https://youtu-chan.com/a');
-  assert.match(badge.title, /1 blocked this session \(6 total\)/);
+  assert.match(badge.getAttribute('aria-label'), /1 blocked this session \(6 total\)/);
   assert.strictEqual(window.localStorage.getItem('rb-blocked-total'), '6');
 });
 
@@ -512,14 +512,11 @@ test('keeps its distance from the anchored corner when the viewport shrinks', ()
   assert.strictEqual(badge.style.top, '566px');
 });
 
-// --- right-click menu ------------------------------------------------------
+// --- hover / click menu ----------------------------------------------------
 
 function openIconMenu(window, badge) {
-  const ev = new window.MouseEvent('contextmenu', {
-    bubbles: true, cancelable: true, clientX: 990, clientY: 20,
-  });
-  badge.dispatchEvent(ev);
-  return ev;
+  badge.dispatchEvent(new window.MouseEvent('mouseenter', { bubbles: true }));
+  return window.document.getElementById('rb-icon-menu');
 }
 
 function menuItem(window, id) {
@@ -529,35 +526,42 @@ function menuItem(window, id) {
   return menu.querySelector('#' + id);
 }
 
-test('right-click on the badge opens a custom menu and cancels the native one', () => {
+test('hovering the badge opens a per-site menu (no hide-icon item)', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
-  const ev = openIconMenu(window, badge);
-  assert.strictEqual(ev.defaultPrevented, true);
-  const menu = window.document.getElementById('rb-icon-menu');
+  const menu = openIconMenu(window, badge);
   assert.ok(menu, 'custom menu should be present');
   assert.notStrictEqual(menu.style.display, 'none');
   const toggle = menuItem(window, 'rb-menu-toggle');
-  const hide = menuItem(window, 'rb-menu-hide');
   assert.ok(toggle, 'toggle item should be in the menu');
-  assert.ok(hide, 'hide item should be in the menu');
   assert.match(toggle.textContent, /Disable on allmanga\.to/i);
+  assert.strictEqual(menuItem(window, 'rb-menu-hide'), null);
+  assert.match(menuItem(window, 'rb-menu-status').textContent, /0 blocked this session/);
 });
 
-test('hide icon from the menu hides the badge and persists', () => {
+test('a left-click without dragging opens the menu', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
-  openIconMenu(window, badge);
-  menuItem(window, 'rb-menu-hide').click();
-  assert.strictEqual(badge.style.display, 'none');
-  assert.strictEqual(window.localStorage.getItem('rb-icon-hidden'), '1');
+  badge.dispatchEvent(new window.MouseEvent('mousedown', {
+    bubbles: true, button: 0, clientX: 990, clientY: 20,
+  }));
+  window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }));
+  const menu = window.document.getElementById('rb-icon-menu');
+  assert.notStrictEqual(menu.style.display, 'none');
+  assert.match(menuItem(window, 'rb-menu-toggle').textContent, /Disable on allmanga\.to/i);
 });
 
-test('a hidden icon stays hidden after reload', () => {
-  const { window } = load({ storage: { 'rb-icon-hidden': '1' } });
+test('right-click does not open the custom menu', () => {
+  const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
-  assert.ok(badge, 'badge node is kept so it can be shown again');
-  assert.strictEqual(badge.style.display, 'none');
+  const ev = new window.MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, clientX: 990, clientY: 20,
+  });
+  badge.dispatchEvent(ev);
+  assert.strictEqual(ev.defaultPrevented, true);
+  const menu = window.document.getElementById('rb-icon-menu');
+  assert.ok(menu);
+  assert.strictEqual(menu.style.display, 'none');
 });
 
 test('disable on this site pauses blocking and switches to the gray intact-chain icon', () => {
@@ -574,7 +578,7 @@ test('disable on this site pauses blocking and switches to the gray intact-chain
     JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
     ['allmanga.to']
   );
-  assert.match(badge.title, /disabled on allmanga\.to/i);
+  assert.match(badge.getAttribute('aria-label'), /disabled on allmanga\.to/i);
   assert.strictEqual(badge.getAttribute('data-rb-enabled'), '0');
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
   assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 2);
@@ -587,7 +591,7 @@ test('enable on this site restores blocking and the orange broken-chain icon', (
     storage: { 'rb-disabled-hosts': JSON.stringify(['allmanga.to']) },
   });
   const badge = window.document.getElementById('rb-status-icon');
-  assert.match(badge.title, /disabled on allmanga\.to/i);
+  assert.match(badge.getAttribute('aria-label'), /disabled on allmanga\.to/i);
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
   openIconMenu(window, badge);
   const toggle = menuItem(window, 'rb-menu-toggle');
@@ -597,7 +601,7 @@ test('enable on this site restores blocking and the orange broken-chain icon', (
     JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
     []
   );
-  assert.match(badge.title, /active on allmanga\.to/i);
+  assert.match(badge.getAttribute('aria-label'), /active on allmanga\.to/i);
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
   assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 4);
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);

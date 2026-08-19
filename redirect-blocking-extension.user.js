@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.17
+// @version      1.18
 // @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -53,7 +53,6 @@
     // --- Status / persistence -------------------------------------------------
     const POS_KEY = 'rb-icon-pos';       // saved badge position (viewport ratios)
     const TOTAL_KEY = 'rb-blocked-total'; // cumulative blocks across page loads
-    const HIDDEN_KEY = 'rb-icon-hidden';  // '1' = status badge hidden
     const ENABLED_KEY = 'rb-enabled';     // legacy global pause ('0'); migrated to hosts
     const DISABLED_HOSTS_KEY = 'rb-disabled-hosts'; // JSON list of hostnames where blocking is off
     const ICON_SIZE = 22;                 // badge width/height in px
@@ -61,14 +60,17 @@
 
     let badgeEl = null;
     let menuEl = null;
-    let hideItem = null;
+    let statusItem = null;
     let toggleItem = null;
     let glyphGroup = null;
     let discEl = null;
     let menuOpen = false;
+    let pointerOnBadge = false;
+    let pointerOnMenu = false;
+    let hideTimer = null;
+    let dragging = false;
     let sessionBlocked = 0;               // blocks during this page load
     let totalBlocked = storageGet(TOTAL_KEY, 0, parseIntSafe); // persisted total
-    let iconHidden = storageGet(HIDDEN_KEY, false, (raw) => raw === '1');
     let disabledHosts = loadDisabledHosts();
 
     // Small, defensive localStorage helpers (storage can throw in private mode)
@@ -134,8 +136,9 @@
         const host = siteKey();
         const label = isSiteEnabled()
             ? `Redirect Blocker active on ${host} — ${sessionBlocked} blocked this session (${totalBlocked} total)`
-            : `Redirect Blocker disabled on ${host} — right-click to enable`;
-        badgeEl.title = label;
+            : `Redirect Blocker disabled on ${host} — hover or click to enable`;
+        // No title attribute: the native tooltip would cover the hover menu.
+        badgeEl.removeAttribute('title');
         badgeEl.setAttribute('aria-label', label);
         badgeEl.setAttribute('data-rb-enabled', isSiteEnabled() ? '1' : '0');
         badgeEl.setAttribute('data-rb-site', host);
@@ -164,18 +167,9 @@
     function syncBadgeVisual() {
         if (!badgeEl) return;
         paintGlyph();
-        badgeEl.style.setProperty('display', iconHidden ? 'none' : 'block', 'important');
+        badgeEl.style.setProperty('display', 'block', 'important');
         updateBadgeTooltip();
-    }
-
-    function setIconHidden(hidden) {
-        iconHidden = !!hidden;
-        storageSet(HIDDEN_KEY, iconHidden ? '1' : '0');
-        syncBadgeVisual();
-        if (iconHidden) {
-            hideMenu();
-            console.log('Redirect Blocker icon hidden. To show it again, run: localStorage.removeItem("rb-icon-hidden"); location.reload()');
-        }
+        if (menuOpen) updateMenuLabels();
     }
 
     function hostnameOf(url) {
@@ -524,16 +518,32 @@
         storageSet(POS_KEY, JSON.stringify({ corner, dx, dy }));
     }
 
-    // Drag handling tracked in JS state (no layout reads), with a small
-    // threshold so a plain click isn't treated as a drag
-    function enableDrag() {
-        let dragging = false;
+    // Drag, hover-menu, and left-click. A small move threshold keeps a
+    // plain click from being treated as a drag.
+    function enableBadgeUi() {
         let moved = false;
         let startMouseX = 0, startMouseY = 0;
         let startLeft = 0, startTop = 0;
 
+        badgeEl.addEventListener('mouseenter', () => {
+            pointerOnBadge = true;
+            showMenu();
+        });
+        badgeEl.addEventListener('mouseleave', () => {
+            pointerOnBadge = false;
+            scheduleHideMenu();
+        });
+        menuEl.addEventListener('mouseenter', () => {
+            pointerOnMenu = true;
+            cancelHideTimer();
+        });
+        menuEl.addEventListener('mouseleave', () => {
+            pointerOnMenu = false;
+            scheduleHideMenu();
+        });
+
         badgeEl.addEventListener('mousedown', (event) => {
-            if (event.button !== 0) return; // left-click only; right-click is the menu
+            if (event.button !== 0) return;
             dragging = true;
             moved = false;
             startMouseX = event.clientX;
@@ -548,7 +558,10 @@
             if (!dragging) return;
             const dx = event.clientX - startMouseX;
             const dy = event.clientY - startMouseY;
-            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) moved = true;
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                moved = true;
+                hideMenu();
+            }
             applyPosition(startLeft + dx, startTop + dy);
         });
 
@@ -558,14 +571,33 @@
             badgeEl.style.cursor = 'grab';
             if (moved) {
                 savePosition(parseFloat(badgeEl.style.left) || 0, parseFloat(badgeEl.style.top) || 0);
+            } else {
+                showMenu();
             }
         });
 
-        // Keep the relative position when the window is resized
+        // Browser context menu would cover ours; do not use right-click.
+        badgeEl.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
+
+        W.addEventListener('mousedown', (event) => {
+            if (!menuOpen) return;
+            if (eventOnBadge(event) || eventOnMenu(event)) return;
+            pointerOnBadge = false;
+            pointerOnMenu = false;
+            hideMenu();
+        }, true);
+        W.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') hideMenu();
+        });
         W.addEventListener('resize', () => {
+            hideMenu();
             const pos = resolvePosition();
             applyPosition(pos.left, pos.top);
         });
+        D.addEventListener('scroll', hideMenu, true);
     }
 
     // Glyph on a disc — built with DOM APIs so Trusted Types / innerHTML CSP
@@ -638,8 +670,7 @@
     }
 
     // Host pages often style `button` / `div` globally. Shadow + a local
-    // stylesheet keeps the menu readable; capture-phase listeners (below)
-    // keep the page from swallowing the right-click.
+    // stylesheet keeps the menu readable.
     function createMenuElement() {
         const host = D.createElement('div');
         host.id = 'rb-icon-menu';
@@ -662,9 +693,11 @@
 
         const style = D.createElement('style');
         style.textContent = [
-            '.menu{display:block;min-width:220px;padding:4px;background:#1a1b1e;color:#f8f9fa;',
+            '.menu{display:block;min-width:200px;padding:4px;background:#1a1b1e;color:#f8f9fa;',
             'border:1px solid #373a40;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45);',
             'font:13px/1.3 system-ui,sans-serif;user-select:none}',
+            '.status{display:block;margin:0;padding:6px 12px 4px;color:#adb5bd;',
+            'font:12px/1.3 system-ui,sans-serif}',
             '.item{display:block;width:100%;box-sizing:border-box;margin:0;padding:8px 12px;',
             'border:0;background:transparent;color:#f8f9fa;font:13px/1.3 system-ui,sans-serif;',
             'text-align:left;cursor:pointer;border-radius:4px}',
@@ -673,6 +706,10 @@
 
         const box = D.createElement('div');
         box.className = 'menu';
+
+        statusItem = D.createElement('div');
+        statusItem.id = 'rb-menu-status';
+        statusItem.className = 'status';
 
         toggleItem = D.createElement('div');
         toggleItem.id = 'rb-menu-toggle';
@@ -685,50 +722,67 @@
             hideMenu();
         });
 
-        hideItem = D.createElement('div');
-        hideItem.id = 'rb-menu-hide';
-        hideItem.className = 'item';
-        hideItem.setAttribute('role', 'menuitem');
-        hideItem.textContent = 'Hide icon';
-        hideItem.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setIconHidden(true);
-        });
-
+        box.appendChild(statusItem);
         box.appendChild(toggleItem);
-        box.appendChild(hideItem);
         root.appendChild(style);
         root.appendChild(box);
         return host;
     }
 
     function updateMenuLabels() {
-        if (!toggleItem) return;
         const host = siteKey();
-        toggleItem.textContent = isSiteEnabled()
-            ? 'Disable on ' + host
-            : 'Enable on ' + host;
+        if (statusItem) {
+            statusItem.textContent = isSiteEnabled()
+                ? sessionBlocked + ' blocked this session (' + totalBlocked + ' total)'
+                : 'Disabled on ' + host;
+        }
+        if (toggleItem) {
+            toggleItem.textContent = isSiteEnabled()
+                ? 'Disable on ' + host
+                : 'Enable on ' + host;
+        }
+    }
+
+    function cancelHideTimer() {
+        if (hideTimer) {
+            W.clearTimeout(hideTimer);
+            hideTimer = null;
+        }
+    }
+
+    function scheduleHideMenu() {
+        cancelHideTimer();
+        hideTimer = W.setTimeout(() => {
+            hideTimer = null;
+            if (!pointerOnBadge && !pointerOnMenu && !dragging) hideMenu();
+        }, 180);
     }
 
     function hideMenu() {
+        cancelHideTimer();
         menuOpen = false;
         if (menuEl) menuEl.style.setProperty('display', 'none', 'important');
     }
 
-    function showMenu(clientX, clientY) {
-        if (!menuEl || iconHidden) return;
+    function showMenu() {
+        if (!menuEl || !badgeEl || dragging) return;
+        cancelHideTimer();
         updateMenuLabels();
         menuEl.style.setProperty('display', 'block', 'important');
-        const w = menuEl.offsetWidth || 230;
-        const h = menuEl.offsetHeight || 72;
-        // Prefer just below-left of the badge so the menu stays attached to it.
-        const badgeLeft = badgeEl ? (parseFloat(badgeEl.style.left) || 0) : clientX;
-        const badgeTop = badgeEl ? (parseFloat(badgeEl.style.top) || 0) : clientY;
-        let left = (typeof clientX === 'number' ? clientX : badgeLeft);
-        let top = (typeof clientY === 'number' ? clientY : badgeTop + ICON_SIZE);
-        if (left + w > W.innerWidth - 4) left = Math.max(4, badgeLeft - w);
-        if (top + h > W.innerHeight - 4) top = Math.max(4, badgeTop - h);
+        const w = menuEl.offsetWidth || 220;
+        const h = menuEl.offsetHeight || 56;
+        const badgeLeft = parseFloat(badgeEl.style.left) || 0;
+        const badgeTop = parseFloat(badgeEl.style.top) || 0;
+        // Sit flush to the left of the disc (usual top-right spot) so the
+        // pointer can travel from icon to menu without a gap.
+        let left = badgeLeft - w - 4;
+        let top = badgeTop;
+        if (left < 4) {
+            left = badgeLeft;
+            top = badgeTop + ICON_SIZE + 4;
+        }
+        if (left + w > W.innerWidth - 4) left = Math.max(4, W.innerWidth - w - 4);
+        if (top + h > W.innerHeight - 4) top = Math.max(4, W.innerHeight - h - 4);
         if (left < 4) left = 4;
         if (top < 4) top = 4;
         menuEl.style.setProperty('left', Math.round(left) + 'px', 'important');
@@ -738,50 +792,15 @@
         menuOpen = true;
     }
 
-    function eventOnBadge(event) {
-        if (!badgeEl) return false;
+    function eventOnNode(event, node) {
+        if (!node) return false;
         const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-        if (event.target === badgeEl || path.indexOf(badgeEl) !== -1) return true;
-        try { return badgeEl.contains(event.target); } catch (e) { return false; }
+        if (event.target === node || path.indexOf(node) !== -1) return true;
+        try { return node.contains(event.target); } catch (e) { return false; }
     }
 
-    function onBadgeContextMenu(event) {
-        if (!eventOnBadge(event) || iconHidden) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
-        showMenu(event.clientX, event.clientY);
-    }
-
-    function onBadgeRightPointer(event) {
-        if (event.button !== 2) return;
-        if (!eventOnBadge(event) || iconHidden) return;
-        event.preventDefault();
-        event.stopPropagation();
-        showMenu(event.clientX, event.clientY);
-    }
-
-    function enableMenuDismiss() {
-        // Capture on window/document at document-start so the host page cannot
-        // swallow the right-click before we open the menu.
-        W.addEventListener('contextmenu', onBadgeContextMenu, true);
-        D.addEventListener('contextmenu', onBadgeContextMenu, true);
-        if (badgeEl) {
-            badgeEl.addEventListener('contextmenu', onBadgeContextMenu, true);
-            badgeEl.addEventListener('mouseup', onBadgeRightPointer, true);
-        }
-        W.addEventListener('mousedown', (event) => {
-            if (!menuOpen || !menuEl) return;
-            if (eventOnBadge(event)) return;
-            if (menuEl === event.target || menuEl.contains(event.target)) return;
-            hideMenu();
-        }, true);
-        W.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') hideMenu();
-        });
-        W.addEventListener('resize', hideMenu);
-        D.addEventListener('scroll', hideMenu, true);
-    }
+    function eventOnBadge(event) { return eventOnNode(event, badgeEl); }
+    function eventOnMenu(event) { return eventOnNode(event, menuEl); }
 
     function nativeAppend(parent, node) {
         if (!parent || !node || node.parentNode === parent) return;
@@ -814,8 +833,7 @@
             badgeEl = createBadgeElement();
             menuEl = createMenuElement();
             syncBadgeVisual();
-            enableDrag();
-            enableMenuDismiss();
+            enableBadgeUi();
             D.addEventListener('fullscreenchange', mountBadge);
             const keep = new MutationObserver(() => {
                 if ((badgeEl && !badgeEl.isConnected) || (menuEl && !menuEl.isConnected)) {
@@ -832,23 +850,7 @@
         observeScripts();
     }
 
-    function registerShowIconCommand() {
-        try {
-            const gm = (typeof GM_registerMenuCommand === 'function')
-                ? GM_registerMenuCommand
-                : (typeof GM !== 'undefined' && GM && typeof GM.registerMenuCommand === 'function'
-                    ? GM.registerMenuCommand.bind(GM)
-                    : null);
-            if (!gm) return;
-            gm('Show Redirect Blocker icon', () => {
-                setIconHidden(false);
-                mountBadge();
-            });
-        } catch (e) { /* page world often has no GM menu API */ }
-    }
-
     function bootBadge() {
-        registerShowIconCommand();
         injectStatusIcon();
         if (D.readyState === 'loading') {
             D.addEventListener('DOMContentLoaded', injectStatusIcon);

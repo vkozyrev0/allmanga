@@ -13,7 +13,7 @@ Some links, scripts, and pop-ups on these sites try to send you to a different d
 - **Stays put for article/ad URLs** — a destination like `isekai2nd.com/20-recommended-science-fiction-anime-...` is cancelled; you remain on the chapter instead of landing on a 404 of that slug on mkissa.
 - **Removes injected scripts** — a `MutationObserver` watches for `<script>` tags pointing at known ad hosts (`youtu-chan.com`, `isekai2nd.com`) and removes them before they run.
 - **Blocks pop-ups** — overrides `window.open` to cancel any pop-up aimed off-site, while letting same-site and sister-site (`allmanga.to` / `mkissa.to` / `mkissa.net`) opens through.
-- **Shows a status badge** — injects a small icon in the top-right corner so you can see at a glance that the script is active. **Orange disc + broken chain** means blocking is on for this site; **gray disc + intact chain** means it is off. Hover for a tooltip showing how many redirects it has blocked — this session and cumulatively. **Drag the badge** to reposition it; its spot is remembered (saved in `localStorage` as an offset from the nearest viewport corner, so it stays put relative to that corner when the window is resized) and restored on the next visit. **Right-click the icon** for a menu: **Disable on this site** / **Enable on this site**, or hide the icon. The per-site choice is remembered (so you can turn it off on `mkissa.to` and leave it on for `allmanga.to`). To show a hidden icon again, run `localStorage.removeItem('rb-icon-hidden'); location.reload()` in the console (or use **Show Redirect Blocker icon** in the userscript manager menu when that command is available).
+- **Shows a status badge** — injects a small icon in the top-right corner so you can see at a glance that the script is active. **Orange disc + broken chain** means blocking is on for this site; **gray disc + intact chain** means it is off. **Hover or left-click** the icon for a menu: block counts, plus **Disable on this site** / **Enable on this site**. The per-site choice is remembered (so you can turn it off on `mkissa.to` and leave it on for `allmanga.to`). **Drag the badge** to reposition it; its spot is remembered (saved in `localStorage` as an offset from the nearest viewport corner, so it stays put relative to that corner when the window is resized) and restored on the next visit.
 
 Known ad-script hosts live in the `blockedDomains` array (used to strip injected scripts). Off-site **navigation** is blocked even when the host is not on that list, so a new affiliate domain does not require a script update.
 
@@ -53,6 +53,6 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.17 |
+| Version | 1.18 |
 | Match | `*://allmanga.to/*`, `*://mkissa.to/*` |
 | Grants | none |
