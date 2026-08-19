@@ -22,11 +22,14 @@ Blocked domains are listed in the `blockedDomains` array at the top of the scrip
 
 mkissa.to is on Cloudflare and prefers **HTTP/3 (QUIC)**. Chrome will not let AdGuard decrypt HTTP/3, so AdGuard userscripts and user rules never run on that tab. A real browser extension injects into the page directly, so QUIC does not matter.
 
-1. Clone or download this repo.
+1. Clone or download this repo (`git pull` if it is already cloned).
 2. Open `chrome://extensions` or `edge://extensions`.
 3. Turn on **Developer mode**.
-4. **Load unpacked** → select the [`chrome-extension`](chrome-extension/) folder.
-5. Open `https://mkissa.to/...` — orange disc in the **top-right**.
+4. **Load unpacked** → select the [`chrome-extension`](chrome-extension/) folder. After a pull, click **Reload** on the card.
+5. On the mkissa tab: puzzle-piece menu → this extension → **This can read and change site data** → **On mkissa.to** (or On all sites). “On click” will not inject on reload.
+6. Click the extension icon once on the chapter page, then hard-reload.
+
+You should see an **8px orange bar across the top** and a **36px “RB” disc** in the top-right. Those come from an isolated-world script (page CSP cannot block it). The previous build used `world: MAIN`, which Cloudflare’s CSP can silently kill.
 
 The extension also blocks `youtu-chan.com` at the network layer.
 
