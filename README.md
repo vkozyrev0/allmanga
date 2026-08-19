@@ -1,6 +1,6 @@
 # allmanga
 
-A [Tampermonkey](https://www.tampermonkey.net/) userscript that blocks unwanted redirects on **allmanga.to** and **mkissa.to**.
+A userscript that blocks unwanted redirects on **allmanga.to** and **mkissa.to**.
 
 Some links, scripts, and pop-ups on these sites try to send you to a different domain. This script keeps you on the site you opened by intercepting those redirects and rewriting them back to the original host.
 
@@ -16,43 +16,11 @@ Some links, scripts, and pop-ups on these sites try to send you to a different d
 
 Blocked domains are listed in the `blockedDomains` array at the top of the script (currently `youtu-chan.com`).
 
-## Installation
+## Installation (AdGuard)
 
-### Chrome / Edge extension (Windows — no Tampermonkey)
-
-mkissa.to is on Cloudflare and prefers **HTTP/3 (QUIC)**. Chrome will not let AdGuard decrypt HTTP/3, so AdGuard userscripts and user rules never run on that tab. A real browser extension injects into the page directly, so QUIC does not matter.
-
-1. Clone or download this repo (`git pull` if it is already cloned).
-2. Open `chrome://extensions` or `edge://extensions`.
-3. Turn on **Developer mode**.
-4. **Load unpacked** → select the [`chrome-extension`](chrome-extension/) folder. After a pull, click **Reload** on the card.
-5. On the mkissa tab: puzzle-piece menu → this extension → **This can read and change site data** → **On mkissa.to** (or On all sites). “On click” will not inject on reload.
-6. Click the extension icon once on the chapter page, then hard-reload.
-
-You should see an **8px orange bar across the top** and a **36px “RB” disc** in the top-right. Drag the disc to move it; the spot is stored as an offset from the nearest viewport corner so it returns there on the next visit and on resize. Those come from an isolated-world script (page CSP cannot block it). The previous build used `world: MAIN`, which Cloudflare’s CSP can silently kill.
-
-The extension also blocks `youtu-chan.com` at the network layer.
-
-### Why AdGuard on Windows did nothing
-
-AdGuard’s own docs: *“Chrome-based browsers do not accept user certificates, so HTTP/3 filtering is not supported in them.”* Cosmetic CSS and JS user rules need the same MITM path, so they fail too.
-
-To force AdGuard’s existing userscript to run, disable QUIC then reload:
-
-- Chrome: `chrome://flags/#enable-quic` → **Disabled** → relaunch
-- Edge: `edge://flags/#enable-quic` → **Disabled** → relaunch
-
-Then the 1.14 userscript / user rules can inject. The unpacked extension does not need this.
-
-### AdGuard app (Windows / Mac / Android)
-
-AdGuard can list a userscript as installed without injecting it into the page. If you do not see an **orange 6px bar across the top** of mkissa.to, the userscript is not running. Use **User rules** instead (this path is always trusted):
-
-1. Open [`adguard-user-rules.txt`](adguard-user-rules.txt) and copy both rules.
-2. AdGuard → **Settings → Filtering → User rules** (Windows/Mac: **Settings → User rules**).
-3. Paste, save, reload mkissa.to.
-
-You should see the orange top bar and a disc in the top-right. If those still do not appear, AdGuard is not injecting JavaScript into that browser (HTTPS filtering off, HTTP/3/QUIC bypass, or the AdGuard *browser extension* rather than the app). Use Tampermonkey in that case.
+1. Install the userscript in AdGuard from  
+   https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
+2. After an update, reload the page with **Ctrl+Shift+R** (cache-bypass). **Ctrl+F5** often keeps a cached document, so the badge does not appear.
 
 ## Configuration
 
@@ -70,7 +38,7 @@ The script logs each action (rewritten URL, removed script, blocked pop-up) to t
 
 ## Development
 
-The script has no build step — it's loaded directly into Tampermonkey. There is a test suite that loads the unmodified script into simulated `allmanga.to` and `mkissa.to` pages (via [jsdom](https://github.com/jsdom/jsdom)) and asserts its behavior using Node's built-in test runner.
+The script has no build step. There is a test suite that loads the unmodified script into simulated `allmanga.to` and `mkissa.to` pages (via [jsdom](https://github.com/jsdom/jsdom)) and asserts its behavior using Node's built-in test runner.
 
 ```bash
 npm install   # one-time: installs jsdom (dev dependency)

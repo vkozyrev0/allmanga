@@ -17,14 +17,6 @@ const SCRIPT_SOURCE = fs.readFileSync(
   'utf8'
 );
 
-test('chrome-extension content.js stays in sync with the userscript', () => {
-  const extension = fs.readFileSync(
-    path.join(__dirname, '..', 'chrome-extension', 'content.js'),
-    'utf8'
-  );
-  assert.strictEqual(extension, SCRIPT_SOURCE);
-});
-
 // Build a fresh page on the given host (default allmanga.to), stub window.open
 // so we can see pass-throughs, load the script, and return handles for
 // assertions. opts.storage seeds localStorage BEFORE the script runs
