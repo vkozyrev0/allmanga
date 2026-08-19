@@ -18,10 +18,16 @@ Blocked domains are listed in the `blockedDomains` array at the top of the scrip
 
 ## Installation
 
-1. Install the [Tampermonkey](https://www.tampermonkey.net/) browser extension (Chrome, Firefox, Edge, Safari).
-2. Open the Tampermonkey dashboard → **Create a new script**.
-3. Replace the contents with [`redirect-blocking-extension.js`](redirect-blocking-extension.js) and save (Ctrl+S).
-4. Visit `allmanga.to` or `mkissa.to` — the script is active automatically.
+**Tampermonkey (recommended on Windows):**
+
+1. Install [Tampermonkey](https://www.tampermonkey.net/) for Chrome or Edge.
+2. In `edge://extensions` or `chrome://extensions`, turn on **Developer mode**. Open Tampermonkey → **Details** and enable **Allow user scripts** (required on Chrome/Edge 138+).
+3. Open this install URL:  
+   https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.user.js  
+   Tampermonkey will prompt to install. Confirm.
+4. Visit `mkissa.to` or `allmanga.to` — orange disc in the top-right means it is running.
+
+Manual: Tampermonkey dashboard → **Create a new script** → paste [`redirect-blocking-extension.js`](redirect-blocking-extension.js) → save (Ctrl+S).
 
 ### AdGuard app (Windows / Mac / Android)
 
