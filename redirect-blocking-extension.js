@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.18
+// @version      1.19
 // @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -149,19 +149,29 @@
         const enabled = isSiteEnabled();
         discEl.setAttribute('fill', enabled ? '#f76707' : '#495057');
         while (glyphGroup.firstChild) glyphGroup.removeChild(glyphGroup.firstChild);
-        // Enabled: broken chain (blocking). Disabled: intact chain (pass-through).
-        const paths = [
-            'M9 12l-2 2a2.5 2.5 0 0 0 3.5 3.5l2 -2',
-            'M15 12l2 -2a2.5 2.5 0 0 0 -3.5 -3.5l-2 2'
-        ];
-        if (enabled) {
-            paths.push('M6.5 6.5l-1 -1', 'M18.5 18.5l1 1');
-        }
-        paths.forEach((d) => {
+        // Enabled: one continuous chain (two loops joined in the middle).
+        // Disabled: the same loops pulled apart plus a slash — reads as
+        // "broken link" even at 22px, where a tiny gap alone disappears.
+        const paths = enabled
+            ? [
+                'M8 13.5l-1.6 1.6a3.2 3.2 0 0 0 4.5 4.5l2.4-2.4',
+                'M16 10.5l1.6-1.6a3.2 3.2 0 0 0-4.5-4.5l-2.4 2.4',
+                'M10 14l4-4'
+            ]
+            : [
+                'M7 14.2l-1.6 1.6a3.2 3.2 0 0 0 4.5 4.5l1.6-1.6',
+                'M17 9.8l1.6-1.6a3.2 3.2 0 0 0-4.5-4.5l-1.6 1.6',
+                'M8 8l8 8'
+            ];
+        paths.forEach((d, i) => {
             const path = D.createElementNS('http://www.w3.org/2000/svg', 'path');
             path.setAttribute('d', d);
+            if (!enabled && i === 2) path.setAttribute('data-rb-slash', '1');
             glyphGroup.appendChild(path);
         });
+        const kind = enabled ? 'unbroken' : 'broken';
+        glyphGroup.setAttribute('data-rb-glyph', kind);
+        if (badgeEl) badgeEl.setAttribute('data-rb-glyph', kind);
     }
 
     function syncBadgeVisual() {
@@ -601,8 +611,8 @@
     }
 
     // Glyph on a disc — built with DOM APIs so Trusted Types / innerHTML CSP
-    // on the host page cannot strip the icon. paintGlyph() fills the paths
-    // (broken chain when blocking, intact chain when this site is disabled).
+    // on the host page cannot strip the icon. paintGlyph() draws an unbroken
+    // chain when this site is enabled and a slashed broken chain when not.
     function createBadgeSvg() {
         const ns = 'http://www.w3.org/2000/svg';
         const svg = D.createElementNS(ns, 'svg');

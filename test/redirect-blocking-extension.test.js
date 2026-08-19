@@ -356,6 +356,7 @@ test('injects a status badge containing an SVG icon', () => {
   assert.ok(badge, 'badge element should be present');
   assert.strictEqual(badge.parentNode, window.document.documentElement);
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'unbroken');
   assert.strictEqual(badge.getAttribute('popover'), null);
   assert.match(badge.getAttribute('aria-label'), /active/i);
   assert.strictEqual(window.document.getElementById('rb-status-bar'), null);
@@ -564,12 +565,14 @@ test('right-click does not open the custom menu', () => {
   assert.strictEqual(menu.style.display, 'none');
 });
 
-test('disable on this site pauses blocking and switches to the gray intact-chain icon', () => {
+test('disable on this site pauses blocking and switches to the gray broken-chain icon', () => {
   const { window, openCalls } = load();
   const badge = window.document.getElementById('rb-status-icon');
   assert.strictEqual(badge.getAttribute('data-rb-enabled'), '1');
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'unbroken');
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
-  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 4);
+  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 3);
+  assert.strictEqual(badge.querySelector('#rb-glyph path[data-rb-slash]'), null);
   openIconMenu(window, badge);
   const toggle = menuItem(window, 'rb-menu-toggle');
   assert.match(toggle.textContent, /Disable on allmanga\.to/i);
@@ -580,18 +583,21 @@ test('disable on this site pauses blocking and switches to the gray intact-chain
   );
   assert.match(badge.getAttribute('aria-label'), /disabled on allmanga\.to/i);
   assert.strictEqual(badge.getAttribute('data-rb-enabled'), '0');
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'broken');
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
-  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 2);
+  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 3);
+  assert.ok(badge.querySelector('#rb-glyph path[data-rb-slash]'), 'disabled glyph has a slash');
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
   assert.strictEqual(openCalls.length, 1);
 });
 
-test('enable on this site restores blocking and the orange broken-chain icon', () => {
+test('enable on this site restores blocking and the orange unbroken-chain icon', () => {
   const { window, openCalls } = load({
     storage: { 'rb-disabled-hosts': JSON.stringify(['allmanga.to']) },
   });
   const badge = window.document.getElementById('rb-status-icon');
   assert.match(badge.getAttribute('aria-label'), /disabled on allmanga\.to/i);
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'broken');
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
   openIconMenu(window, badge);
   const toggle = menuItem(window, 'rb-menu-toggle');
@@ -602,8 +608,10 @@ test('enable on this site restores blocking and the orange broken-chain icon', (
     []
   );
   assert.match(badge.getAttribute('aria-label'), /active on allmanga\.to/i);
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'unbroken');
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
-  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 4);
+  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 3);
+  assert.strictEqual(badge.querySelector('#rb-glyph path[data-rb-slash]'), null);
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
   assert.strictEqual(openCalls.length, 0);
 });
