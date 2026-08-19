@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.16
+// @version      1.17
 // @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -54,7 +54,8 @@
     const POS_KEY = 'rb-icon-pos';       // saved badge position (viewport ratios)
     const TOTAL_KEY = 'rb-blocked-total'; // cumulative blocks across page loads
     const HIDDEN_KEY = 'rb-icon-hidden';  // '1' = status badge hidden
-    const ENABLED_KEY = 'rb-enabled';     // '0' = redirect blocking paused
+    const ENABLED_KEY = 'rb-enabled';     // legacy global pause ('0'); migrated to hosts
+    const DISABLED_HOSTS_KEY = 'rb-disabled-hosts'; // JSON list of hostnames where blocking is off
     const ICON_SIZE = 22;                 // badge width/height in px
     const ICON_MARGIN = 12;               // default gap from the viewport edge
 
@@ -62,11 +63,13 @@
     let menuEl = null;
     let hideItem = null;
     let toggleItem = null;
+    let glyphGroup = null;
+    let discEl = null;
     let menuOpen = false;
     let sessionBlocked = 0;               // blocks during this page load
     let totalBlocked = storageGet(TOTAL_KEY, 0, parseIntSafe); // persisted total
     let iconHidden = storageGet(HIDDEN_KEY, false, (raw) => raw === '1');
-    let blockerEnabled = storageGet(ENABLED_KEY, true, (raw) => raw !== '0');
+    let disabledHosts = loadDisabledHosts();
 
     // Small, defensive localStorage helpers (storage can throw in private mode)
     function storageGet(key, fallback, parse) {
@@ -87,6 +90,38 @@
         return Number.isNaN(n) ? undefined : n;
     }
 
+    // Bare hostname used as the per-site toggle key (www. stripped).
+    function siteKey() {
+        return String(originalHostname || '').toLowerCase().replace(/^www\./, '');
+    }
+
+    function loadDisabledHosts() {
+        const list = storageGet(DISABLED_HOSTS_KEY, [], (raw) => {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : undefined;
+        });
+        const set = new Set(list.map((h) => String(h).toLowerCase().replace(/^www\./, '')));
+        // v1.16 stored a single global flag. Treat it as "off on this host".
+        if (storageGet(ENABLED_KEY, null) === '0') {
+            set.add(siteKey());
+            try { W.localStorage.removeItem(ENABLED_KEY); } catch (e) { /* ignore */ }
+            storageSet(DISABLED_HOSTS_KEY, JSON.stringify(Array.from(set)));
+        }
+        return set;
+    }
+
+    function isSiteEnabled() {
+        return !disabledHosts.has(siteKey());
+    }
+
+    function setSiteEnabled(on) {
+        const key = siteKey();
+        if (on) disabledHosts.delete(key);
+        else disabledHosts.add(key);
+        storageSet(DISABLED_HOSTS_KEY, JSON.stringify(Array.from(disabledHosts)));
+        syncBadgeVisual();
+    }
+
     // Count a blocked redirect and refresh the badge tooltip
     function recordBlock() {
         sessionBlocked++;
@@ -96,25 +131,41 @@
     }
     function updateBadgeTooltip() {
         if (!badgeEl) return;
-        const label = blockerEnabled
-            ? `Redirect Blocker active — ${sessionBlocked} blocked this session (${totalBlocked} total)`
-            : 'Redirect Blocker disabled — right-click to enable';
+        const host = siteKey();
+        const label = isSiteEnabled()
+            ? `Redirect Blocker active on ${host} — ${sessionBlocked} blocked this session (${totalBlocked} total)`
+            : `Redirect Blocker disabled on ${host} — right-click to enable`;
         badgeEl.title = label;
         badgeEl.setAttribute('aria-label', label);
+        badgeEl.setAttribute('data-rb-enabled', isSiteEnabled() ? '1' : '0');
+        badgeEl.setAttribute('data-rb-site', host);
+    }
+
+    function paintGlyph() {
+        if (!glyphGroup || !discEl) return;
+        const enabled = isSiteEnabled();
+        discEl.setAttribute('fill', enabled ? '#f76707' : '#495057');
+        while (glyphGroup.firstChild) glyphGroup.removeChild(glyphGroup.firstChild);
+        // Enabled: broken chain (blocking). Disabled: intact chain (pass-through).
+        const paths = [
+            'M9 12l-2 2a2.5 2.5 0 0 0 3.5 3.5l2 -2',
+            'M15 12l2 -2a2.5 2.5 0 0 0 -3.5 -3.5l-2 2'
+        ];
+        if (enabled) {
+            paths.push('M6.5 6.5l-1 -1', 'M18.5 18.5l1 1');
+        }
+        paths.forEach((d) => {
+            const path = D.createElementNS('http://www.w3.org/2000/svg', 'path');
+            path.setAttribute('d', d);
+            glyphGroup.appendChild(path);
+        });
     }
 
     function syncBadgeVisual() {
         if (!badgeEl) return;
-        const circle = badgeEl.querySelector('circle');
-        if (circle) circle.setAttribute('fill', blockerEnabled ? '#f76707' : '#868e96');
+        paintGlyph();
         badgeEl.style.setProperty('display', iconHidden ? 'none' : 'block', 'important');
         updateBadgeTooltip();
-    }
-
-    function setBlockerEnabled(on) {
-        blockerEnabled = !!on;
-        storageSet(ENABLED_KEY, blockerEnabled ? '1' : '0');
-        syncBadgeVisual();
     }
 
     function setIconHidden(hidden) {
@@ -160,7 +211,7 @@
 
     // Classify a navigation URL: allow, rewrite onto this host, or block (stay).
     function decide(url) {
-        if (!blockerEnabled) return { action: 'allow', url: url };
+        if (!isSiteEnabled()) return { action: 'allow', url: url };
         if (!url) return { action: 'allow', url: url };
         try {
             const urlObj = new URL(String(url), W.location.origin);
@@ -275,7 +326,7 @@
 
     function sanitizeNode(node) {
         if (!node || node.nodeType !== 1) return;
-        if (!blockerEnabled) return;
+        if (!isSiteEnabled()) return;
         if (node.tagName === 'SCRIPT' && isBlockedScriptSrc(node.src)) {
             node.remove();
             recordBlock();
@@ -517,8 +568,9 @@
         });
     }
 
-    // Broken-link glyph on an orange disc — built with DOM APIs so Trusted
-    // Types / innerHTML CSP on the host page cannot strip the icon.
+    // Glyph on a disc — built with DOM APIs so Trusted Types / innerHTML CSP
+    // on the host page cannot strip the icon. paintGlyph() fills the paths
+    // (broken chain when blocking, intact chain when this site is disabled).
     function createBadgeSvg() {
         const ns = 'http://www.w3.org/2000/svg';
         const svg = D.createElementNS(ns, 'svg');
@@ -527,30 +579,22 @@
         svg.setAttribute('height', String(ICON_SIZE));
         svg.style.pointerEvents = 'none';
 
-        const circle = D.createElementNS(ns, 'circle');
-        circle.setAttribute('cx', '12');
-        circle.setAttribute('cy', '12');
-        circle.setAttribute('r', '11');
-        circle.setAttribute('fill', '#f76707');
-        svg.appendChild(circle);
+        discEl = D.createElementNS(ns, 'circle');
+        discEl.id = 'rb-disc';
+        discEl.setAttribute('cx', '12');
+        discEl.setAttribute('cy', '12');
+        discEl.setAttribute('r', '11');
+        discEl.setAttribute('fill', '#f76707');
+        svg.appendChild(discEl);
 
-        const g = D.createElementNS(ns, 'g');
-        g.setAttribute('fill', 'none');
-        g.setAttribute('stroke', '#ffffff');
-        g.setAttribute('stroke-width', '2');
-        g.setAttribute('stroke-linecap', 'round');
-        g.setAttribute('stroke-linejoin', 'round');
-        [
-            'M9 12l-2 2a2.5 2.5 0 0 0 3.5 3.5l2 -2',
-            'M15 12l2 -2a2.5 2.5 0 0 0 -3.5 -3.5l-2 2',
-            'M6.5 6.5l-1 -1',
-            'M18.5 18.5l1 1'
-        ].forEach((d) => {
-            const path = D.createElementNS(ns, 'path');
-            path.setAttribute('d', d);
-            g.appendChild(path);
-        });
-        svg.appendChild(g);
+        glyphGroup = D.createElementNS(ns, 'g');
+        glyphGroup.id = 'rb-glyph';
+        glyphGroup.setAttribute('fill', 'none');
+        glyphGroup.setAttribute('stroke', '#ffffff');
+        glyphGroup.setAttribute('stroke-width', '2');
+        glyphGroup.setAttribute('stroke-linecap', 'round');
+        glyphGroup.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(glyphGroup);
         return svg;
     }
 
@@ -589,85 +633,82 @@
         badge.style.setProperty('outline', 'none', 'important');
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
         badge.addEventListener('mouseleave', () => { badge.style.opacity = '1'; });
-        badge.addEventListener('contextmenu', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            showMenu(event.clientX, event.clientY);
-        });
         badge.appendChild(createBadgeSvg());
         return badge;
     }
 
-    function styleMenuItem(item) {
-        item.style.cssText = [
-            'display:block',
-            'width:100%',
-            'box-sizing:border-box',
-            'margin:0',
-            'padding:7px 12px',
-            'border:none',
-            'background:transparent',
-            'color:#f8f9fa',
-            'font:13px/1.3 system-ui,sans-serif',
-            'text-align:left',
-            'cursor:pointer',
-            'border-radius:4px'
-        ].join(';');
-        item.addEventListener('mouseenter', () => { item.style.background = '#f76707'; });
-        item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
-    }
-
+    // Host pages often style `button` / `div` globally. Shadow + a local
+    // stylesheet keeps the menu readable; capture-phase listeners (below)
+    // keep the page from swallowing the right-click.
     function createMenuElement() {
-        const menu = D.createElement('div');
-        menu.id = 'rb-icon-menu';
-        menu.style.cssText = [
-            'display:none',
-            'position:fixed',
-            'z-index:2147483647',
-            'min-width:200px',
-            'padding:4px',
-            'margin:0',
-            'background:#1a1b1e',
-            'color:#f8f9fa',
-            'border:1px solid #373a40',
-            'border-radius:6px',
-            'box-shadow:0 8px 24px rgba(0,0,0,0.45)',
-            'user-select:none'
-        ].join(';');
-        menu.style.setProperty('position', 'fixed', 'important');
-        menu.style.setProperty('z-index', '2147483647', 'important');
+        const host = D.createElement('div');
+        host.id = 'rb-icon-menu';
+        host.setAttribute('role', 'menu');
+        [
+            ['display', 'none'],
+            ['position', 'fixed'],
+            ['z-index', '2147483647'],
+            ['margin', '0'],
+            ['padding', '0'],
+            ['border', 'none'],
+            ['background', 'transparent'],
+            ['pointer-events', 'auto']
+        ].forEach(([prop, value]) => host.style.setProperty(prop, value, 'important'));
 
-        toggleItem = D.createElement('button');
+        let root = host;
+        try {
+            if (host.attachShadow) root = host.attachShadow({ mode: 'open' });
+        } catch (e) { root = host; }
+
+        const style = D.createElement('style');
+        style.textContent = [
+            '.menu{display:block;min-width:220px;padding:4px;background:#1a1b1e;color:#f8f9fa;',
+            'border:1px solid #373a40;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45);',
+            'font:13px/1.3 system-ui,sans-serif;user-select:none}',
+            '.item{display:block;width:100%;box-sizing:border-box;margin:0;padding:8px 12px;',
+            'border:0;background:transparent;color:#f8f9fa;font:13px/1.3 system-ui,sans-serif;',
+            'text-align:left;cursor:pointer;border-radius:4px}',
+            '.item:hover{background:#f76707}'
+        ].join('');
+
+        const box = D.createElement('div');
+        box.className = 'menu';
+
+        toggleItem = D.createElement('div');
         toggleItem.id = 'rb-menu-toggle';
-        toggleItem.type = 'button';
-        toggleItem.textContent = 'Disable redirect blocker';
-        styleMenuItem(toggleItem);
+        toggleItem.className = 'item';
+        toggleItem.setAttribute('role', 'menuitem');
         toggleItem.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
-            setBlockerEnabled(!blockerEnabled);
+            setSiteEnabled(!isSiteEnabled());
             hideMenu();
         });
 
-        hideItem = D.createElement('button');
+        hideItem = D.createElement('div');
         hideItem.id = 'rb-menu-hide';
-        hideItem.type = 'button';
+        hideItem.className = 'item';
+        hideItem.setAttribute('role', 'menuitem');
         hideItem.textContent = 'Hide icon';
-        styleMenuItem(hideItem);
         hideItem.addEventListener('click', (event) => {
             event.preventDefault();
             event.stopPropagation();
             setIconHidden(true);
         });
 
-        menu.appendChild(toggleItem);
-        menu.appendChild(hideItem);
-        return menu;
+        box.appendChild(toggleItem);
+        box.appendChild(hideItem);
+        root.appendChild(style);
+        root.appendChild(box);
+        return host;
     }
 
     function updateMenuLabels() {
         if (!toggleItem) return;
-        toggleItem.textContent = blockerEnabled ? 'Disable redirect blocker' : 'Enable redirect blocker';
+        const host = siteKey();
+        toggleItem.textContent = isSiteEnabled()
+            ? 'Disable on ' + host
+            : 'Enable on ' + host;
     }
 
     function hideMenu() {
@@ -679,12 +720,15 @@
         if (!menuEl || iconHidden) return;
         updateMenuLabels();
         menuEl.style.setProperty('display', 'block', 'important');
-        const w = menuEl.offsetWidth || 210;
-        const h = menuEl.offsetHeight || 68;
-        let left = clientX;
-        let top = clientY;
-        if (left + w > W.innerWidth - 4) left = Math.max(4, W.innerWidth - w - 4);
-        if (top + h > W.innerHeight - 4) top = Math.max(4, W.innerHeight - h - 4);
+        const w = menuEl.offsetWidth || 230;
+        const h = menuEl.offsetHeight || 72;
+        // Prefer just below-left of the badge so the menu stays attached to it.
+        const badgeLeft = badgeEl ? (parseFloat(badgeEl.style.left) || 0) : clientX;
+        const badgeTop = badgeEl ? (parseFloat(badgeEl.style.top) || 0) : clientY;
+        let left = (typeof clientX === 'number' ? clientX : badgeLeft);
+        let top = (typeof clientY === 'number' ? clientY : badgeTop + ICON_SIZE);
+        if (left + w > W.innerWidth - 4) left = Math.max(4, badgeLeft - w);
+        if (top + h > W.innerHeight - 4) top = Math.max(4, badgeTop - h);
         if (left < 4) left = 4;
         if (top < 4) top = 4;
         menuEl.style.setProperty('left', Math.round(left) + 'px', 'important');
@@ -694,10 +738,42 @@
         menuOpen = true;
     }
 
+    function eventOnBadge(event) {
+        if (!badgeEl) return false;
+        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+        if (event.target === badgeEl || path.indexOf(badgeEl) !== -1) return true;
+        try { return badgeEl.contains(event.target); } catch (e) { return false; }
+    }
+
+    function onBadgeContextMenu(event) {
+        if (!eventOnBadge(event) || iconHidden) return;
+        event.preventDefault();
+        event.stopPropagation();
+        if (typeof event.stopImmediatePropagation === 'function') event.stopImmediatePropagation();
+        showMenu(event.clientX, event.clientY);
+    }
+
+    function onBadgeRightPointer(event) {
+        if (event.button !== 2) return;
+        if (!eventOnBadge(event) || iconHidden) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showMenu(event.clientX, event.clientY);
+    }
+
     function enableMenuDismiss() {
+        // Capture on window/document at document-start so the host page cannot
+        // swallow the right-click before we open the menu.
+        W.addEventListener('contextmenu', onBadgeContextMenu, true);
+        D.addEventListener('contextmenu', onBadgeContextMenu, true);
+        if (badgeEl) {
+            badgeEl.addEventListener('contextmenu', onBadgeContextMenu, true);
+            badgeEl.addEventListener('mouseup', onBadgeRightPointer, true);
+        }
         W.addEventListener('mousedown', (event) => {
             if (!menuOpen || !menuEl) return;
-            if (menuEl.contains(event.target)) return;
+            if (eventOnBadge(event)) return;
+            if (menuEl === event.target || menuEl.contains(event.target)) return;
             hideMenu();
         }, true);
         W.addEventListener('keydown', (event) => {

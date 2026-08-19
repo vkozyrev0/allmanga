@@ -522,6 +522,13 @@ function openIconMenu(window, badge) {
   return ev;
 }
 
+function menuItem(window, id) {
+  const menu = window.document.getElementById('rb-icon-menu');
+  if (!menu) return null;
+  if (menu.shadowRoot) return menu.shadowRoot.getElementById(id);
+  return menu.querySelector('#' + id);
+}
+
 test('right-click on the badge opens a custom menu and cancels the native one', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
@@ -530,15 +537,18 @@ test('right-click on the badge opens a custom menu and cancels the native one', 
   const menu = window.document.getElementById('rb-icon-menu');
   assert.ok(menu, 'custom menu should be present');
   assert.notStrictEqual(menu.style.display, 'none');
-  assert.ok(window.document.getElementById('rb-menu-toggle'));
-  assert.ok(window.document.getElementById('rb-menu-hide'));
+  const toggle = menuItem(window, 'rb-menu-toggle');
+  const hide = menuItem(window, 'rb-menu-hide');
+  assert.ok(toggle, 'toggle item should be in the menu');
+  assert.ok(hide, 'hide item should be in the menu');
+  assert.match(toggle.textContent, /Disable on allmanga\.to/i);
 });
 
 test('hide icon from the menu hides the badge and persists', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
   openIconMenu(window, badge);
-  window.document.getElementById('rb-menu-hide').click();
+  menuItem(window, 'rb-menu-hide').click();
   assert.strictEqual(badge.style.display, 'none');
   assert.strictEqual(window.localStorage.getItem('rb-icon-hidden'), '1');
 });
@@ -550,38 +560,89 @@ test('a hidden icon stays hidden after reload', () => {
   assert.strictEqual(badge.style.display, 'none');
 });
 
-test('disable from the menu pauses blocking and greys the icon', () => {
+test('disable on this site pauses blocking and switches to the gray intact-chain icon', () => {
   const { window, openCalls } = load();
   const badge = window.document.getElementById('rb-status-icon');
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '1');
+  assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
+  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 4);
   openIconMenu(window, badge);
-  const toggle = window.document.getElementById('rb-menu-toggle');
-  assert.match(toggle.textContent, /Disable/i);
+  const toggle = menuItem(window, 'rb-menu-toggle');
+  assert.match(toggle.textContent, /Disable on allmanga\.to/i);
   toggle.click();
-  assert.strictEqual(window.localStorage.getItem('rb-enabled'), '0');
-  assert.match(badge.title, /disabled/i);
-  assert.strictEqual(badge.querySelector('circle').getAttribute('fill'), '#868e96');
+  assert.deepStrictEqual(
+    JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
+    ['allmanga.to']
+  );
+  assert.match(badge.title, /disabled on allmanga\.to/i);
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '0');
+  assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
+  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 2);
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
   assert.strictEqual(openCalls.length, 1);
 });
 
-test('enable from the menu restores blocking', () => {
-  const { window, openCalls } = load({ storage: { 'rb-enabled': '0' } });
+test('enable on this site restores blocking and the orange broken-chain icon', () => {
+  const { window, openCalls } = load({
+    storage: { 'rb-disabled-hosts': JSON.stringify(['allmanga.to']) },
+  });
   const badge = window.document.getElementById('rb-status-icon');
-  assert.match(badge.title, /disabled/i);
+  assert.match(badge.title, /disabled on allmanga\.to/i);
+  assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
   openIconMenu(window, badge);
-  const toggle = window.document.getElementById('rb-menu-toggle');
-  assert.match(toggle.textContent, /Enable/i);
+  const toggle = menuItem(window, 'rb-menu-toggle');
+  assert.match(toggle.textContent, /Enable on allmanga\.to/i);
   toggle.click();
-  assert.strictEqual(window.localStorage.getItem('rb-enabled'), '1');
-  assert.match(badge.title, /active/i);
+  assert.deepStrictEqual(
+    JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
+    []
+  );
+  assert.match(badge.title, /active on allmanga\.to/i);
+  assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
+  assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 4);
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
   assert.strictEqual(openCalls.length, 0);
 });
 
-test('disabled state persists across reloads', () => {
-  const { window, openCalls } = load({ storage: { 'rb-enabled': '0' } });
+test('disabled host persists across reloads', () => {
+  const { window, openCalls } = load({
+    storage: { 'rb-disabled-hosts': JSON.stringify(['allmanga.to']) },
+  });
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
   assert.strictEqual(openCalls.length, 1);
+});
+
+test('legacy rb-enabled=0 migrates to disabling the current host', () => {
+  const { window, openCalls } = load({ storage: { 'rb-enabled': '0' } });
+  assert.deepStrictEqual(
+    JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
+    ['allmanga.to']
+  );
+  assert.strictEqual(window.localStorage.getItem('rb-enabled'), null);
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('disabling on allmanga.to does not disable mkissa.to', () => {
+  const manga = load();
+  const badge = manga.window.document.getElementById('rb-status-icon');
+  openIconMenu(manga.window, badge);
+  menuItem(manga.window, 'rb-menu-toggle').click();
+  const saved = manga.window.localStorage.getItem('rb-disabled-hosts');
+
+  const kiss = load({ url: 'https://mkissa.to/', storage: { 'rb-disabled-hosts': saved } });
+  assert.strictEqual(kiss.window.open('https://youtu-chan.com/ad'), null);
+  assert.strictEqual(kiss.openCalls.length, 0);
+  const kissBadge = kiss.window.document.getElementById('rb-status-icon');
+  assert.strictEqual(kissBadge.getAttribute('data-rb-enabled'), '1');
+  assert.strictEqual(kissBadge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
+});
+
+test('menu on mkissa.to names that host', () => {
+  const { window } = load({ url: 'https://mkissa.to/' });
+  const badge = window.document.getElementById('rb-status-icon');
+  openIconMenu(window, badge);
+  assert.match(menuItem(window, 'rb-menu-toggle').textContent, /Disable on mkissa\.to/i);
 });
 
 test('right-click does not start a drag', () => {
