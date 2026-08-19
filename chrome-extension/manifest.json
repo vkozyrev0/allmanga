@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "allmanga/mkissa Redirect Blocker",
-  "version": "1.16.0",
+  "version": "1.17.0",
   "description": "Blocks off-site redirects on allmanga.to and mkissa.to.",
   "action": {
     "default_title": "Redirect Blocker — click if the orange RB disc is missing"
