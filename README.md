@@ -1,27 +1,42 @@
 # allmanga
 
-A userscript that blocks unwanted redirects on **allmanga.to** and **mkissa.to**.
+A userscript that blocks unwanted redirects on **allmanga.to**, **mkissa.to**, and **mkissa.net**.
 
 Some links, scripts, and pop-ups on these sites try to send you to a different domain (for example `youtu-chan.com`, or a next-chapter click that opens `isekai2nd.com`). This script keeps you on the site you opened.
 
 ## What it does
 
-`redirect-blocking-extension.js` runs on every `allmanga.to` and `mkissa.to` page (at `document-start`) and:
+`redirect-blocking-extension.js` runs on every matched page (at `document-start`, in the page world) and:
 
 - **Blocks any off-site navigation** — not just a hardcoded ad domain. A next-page click, `location.href` / `location.assign` / `location.replace`, the Chromium Navigation API, `history.pushState` / `replaceState`, form submits, and meta-refresh are all checked.
 - **Rewrites manga-shaped URLs** — if the hijack copied a `/manga/...` (or `/anime/...`) path onto another host, that path is rewritten back onto the current host so the chapter still loads.
 - **Stays put for article/ad URLs** — a destination like `isekai2nd.com/20-recommended-science-fiction-anime-...` is cancelled; you remain on the chapter instead of landing on a 404 of that slug on mkissa.
 - **Removes injected scripts** — a `MutationObserver` watches for `<script>` tags pointing at known ad hosts (`youtu-chan.com`, `isekai2nd.com`) and removes them before they run.
-- **Blocks pop-ups** — overrides `window.open` to cancel any pop-up aimed off-site, while letting same-site and sister-site (`allmanga.to` / `mkissa.to` / `mkissa.net`) opens through.
-- **Shows a status badge** — injects a small icon in the top-right corner so you can see at a glance that the script is active. **Orange disc + unbroken chain** means blocking is on for this site; **gray disc + broken/slashed chain** means it is off. **Hover or left-click** the icon for a menu: block counts, plus **Disable on this site** / **Enable on this site**. The per-site choice is remembered (so you can turn it off on `mkissa.to` and leave it on for `allmanga.to`). **Drag the badge** to reposition it; its spot is remembered (saved in `localStorage` as an offset from the nearest viewport corner, so it stays put relative to that corner when the window is resized) and restored on the next visit.
+- **Blocks pop-ups** — overrides `window.open` to cancel any pop-up aimed off-site, while letting same-site and sister-site (`allmanga.to` / `mkissa.to` / `mkissa.net`) opens through. A `target=_blank` social link (Discord, etc.) is left alone.
+- **Shows a status badge** — a small disc in the top-right corner so you can see that the script is running and whether it is on for this host.
 
 Known ad-script hosts live in the `blockedDomains` array (used to strip injected scripts). Off-site **navigation** is blocked even when the host is not on that list, so a new affiliate domain does not require a script update.
 
+## Using the badge
+
+| State | Looks like |
+|-------|------------|
+| Blocking **on** for this site | Orange disc, unbroken chain |
+| Blocking **off** for this site | Gray disc, broken chain with a slash |
+
+- **Hover or left-click** the disc to open the menu (block counts + **Disable on this site** / **Enable on this site**). The choice is remembered per host, so mkissa can be off while allmanga stays on.
+- **Drag** the disc to move it. The spot is saved as an offset from the nearest viewport corner, so it stays put when the window is resized.
+- Right-click is not used. The browser’s own context menu would cover ours.
+
 ## Installation (AdGuard)
 
-1. Install the userscript in AdGuard from  
-   https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
+1. Install the userscript from  
+   https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js  
+   Tampermonkey / Windows can also use  
+   https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.user.js
 2. After an update, reload the page with **Ctrl+Shift+R** (cache-bypass). **Ctrl+F5** often keeps a cached document, so the badge does not appear.
+
+Optional network-level blocks for the same ad hosts live in [`adguard-user-rules.txt`](adguard-user-rules.txt). The userscript is the main install path.
 
 ## Configuration
 
@@ -33,9 +48,22 @@ const blockedDomains = ['youtu-chan.com', 'isekai2nd.com', 'another-domain.com']
 
 Matching is substring-based against the URL hostname, so `youtu-chan.com` also matches subdomains like `ads.youtu-chan.com`.
 
+Preferences are stored in the site’s `localStorage`:
+
+| Key | Meaning |
+|-----|---------|
+| `rb-disabled-hosts` | JSON list of hostnames where blocking is paused |
+| `rb-icon-pos` | Badge position `{ corner, dx, dy }` |
+| `rb-blocked-total` | Lifetime blocked-redirect count |
+
 ## Debugging
 
 The script logs each action (rewritten URL, removed script, blocked pop-up) to the browser console. Open DevTools (F12) → **Console** to see what it's catching.
+
+## Documentation
+
+- [Findings and method](docs/findings-and-method.md) — how the hijacks work and why this approach
+- [Future improvements](docs/future-improvements.md) — follow-up ideas, not a commitment
 
 ## Development
 
@@ -47,12 +75,13 @@ npm test      # run the behavioral test suite
 npm run check # syntax-check the script with `node --check`
 ```
 
-The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-script removal, the `history` wrappers, and the mkissa next-page hijack to `isekai2nd.com` on both hosts — including regression tests for falsy and unparseable URLs. Requires Node 18+ (developed on Node 26).
+The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-script removal, the `history` wrappers, the mkissa next-page hijack to `isekai2nd.com`, the status badge (position, drag, hover/click menu, per-site enable/disable, glyph states), and regressions for falsy and unparseable URLs. Requires Node 18+ (developed on Node 26).
 
 ## Metadata
 
 | Field | Value |
 |-------|-------|
 | Version | 1.19 |
-| Match | `*://allmanga.to/*`, `*://mkissa.to/*` |
-| Grants | none |
+| Match | `allmanga.to`, `mkissa.to`, `mkissa.net` (with `www` and `*.` variants) |
+| Run at | `document-start` |
+| Inject | page (`@inject-into page`, `@grant unsafeWindow`) |
