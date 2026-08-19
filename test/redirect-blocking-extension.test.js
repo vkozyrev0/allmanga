@@ -222,9 +222,33 @@ test('injects a status badge containing an SVG icon', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
   assert.ok(badge, 'badge element should be present');
-  assert.strictEqual(badge.parentNode, window.document.body);
+  assert.strictEqual(badge.parentNode, window.document.documentElement);
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
   assert.match(badge.title, /active/i);
+});
+
+test('re-appends the badge if the page removes it', async () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.ok(badge);
+  badge.remove();
+  assert.strictEqual(badge.isConnected, false);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(badge.isConnected, true);
+  assert.strictEqual(badge.parentNode, window.document.documentElement);
+});
+
+test('moves the badge into the fullscreen element', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const stage = window.document.createElement('div');
+  window.document.body.appendChild(stage);
+  Object.defineProperty(window.document, 'fullscreenElement', {
+    configurable: true,
+    get: () => stage,
+  });
+  window.document.dispatchEvent(new window.Event('fullscreenchange'));
+  assert.strictEqual(badge.parentNode, stage);
 });
 
 test('does not inject a duplicate badge', () => {

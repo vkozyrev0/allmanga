@@ -1,11 +1,14 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.10
+// @version      1.11
 // @description  Prevents redirects to blocked domains on allmanga.to and mkissa.to by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
 // @match        *://mkissa.to/*
+// @run-at       document-start
+// @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
+// @updateURL    https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
 // @grant        none
 // ==/UserScript==
 
@@ -256,9 +259,44 @@
         });
     }
 
-    // Inject a small status badge so it's visible the script is active
-    function injectStatusIcon() {
-        if (document.getElementById('rb-status-icon')) return; // avoid duplicates
+    // Broken-link glyph on an orange disc — built with DOM APIs so Trusted
+    // Types / innerHTML CSP on the host page cannot strip the icon.
+    function createBadgeSvg() {
+        const ns = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('width', String(ICON_SIZE));
+        svg.setAttribute('height', String(ICON_SIZE));
+        svg.style.pointerEvents = 'none';
+
+        const circle = document.createElementNS(ns, 'circle');
+        circle.setAttribute('cx', '12');
+        circle.setAttribute('cy', '12');
+        circle.setAttribute('r', '11');
+        circle.setAttribute('fill', '#f76707');
+        svg.appendChild(circle);
+
+        const g = document.createElementNS(ns, 'g');
+        g.setAttribute('fill', 'none');
+        g.setAttribute('stroke', '#ffffff');
+        g.setAttribute('stroke-width', '2');
+        g.setAttribute('stroke-linecap', 'round');
+        g.setAttribute('stroke-linejoin', 'round');
+        [
+            'M9 12l-2 2a2.5 2.5 0 0 0 3.5 3.5l2 -2',
+            'M15 12l2 -2a2.5 2.5 0 0 0 -3.5 -3.5l-2 2',
+            'M6.5 6.5l-1 -1',
+            'M18.5 18.5l1 1'
+        ].forEach((d) => {
+            const path = document.createElementNS(ns, 'path');
+            path.setAttribute('d', d);
+            g.appendChild(path);
+        });
+        svg.appendChild(g);
+        return svg;
+    }
+
+    function createBadgeElement() {
         const badge = document.createElement('div');
         badge.id = 'rb-status-icon';
         badge.style.cssText = [
@@ -274,29 +312,42 @@
         ].join(';');
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
         badge.addEventListener('mouseleave', () => { badge.style.opacity = '0.55'; });
-        // Broken link (unlink) on an orange disc — a severed redirect
-        badge.innerHTML =
-            '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="' + ICON_SIZE + '" height="' + ICON_SIZE + '" style="pointer-events:none">' +
-            '<circle cx="12" cy="12" r="11" fill="#f76707"/>' +
-            '<g fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '<path d="M9 12l-2 2a2.5 2.5 0 0 0 3.5 3.5l2 -2"/>' +
-            '<path d="M15 12l2 -2a2.5 2.5 0 0 0 -3.5 -3.5l-2 2"/>' +
-            '<path d="M6.5 6.5l-1 -1"/>' +
-            '<path d="M18.5 18.5l1 1"/>' +
-            '</g>' +
-            '</svg>';
-        document.body.appendChild(badge);
-
-        badgeEl = badge;
-        const pos = resolvePosition();
-        applyPosition(pos.left, pos.top);
-        updateBadgeTooltip();
-        enableDrag();
+        badge.appendChild(createBadgeSvg());
+        return badge;
     }
 
-    if (document.body) {
-        injectStatusIcon();
-    } else {
+    // Prefer <html> over <body>: SvelteKit (mkissa chapter reader) replaces
+    // body during hydrate. If the reader goes fullscreen, move the badge
+    // into the fullscreen element or it disappears.
+    function mountBadge() {
+        if (!badgeEl) return;
+        const parent = document.fullscreenElement || document.documentElement;
+        if (!parent) return;
+        if (badgeEl.parentNode !== parent) parent.appendChild(badgeEl);
+        const pos = resolvePosition();
+        applyPosition(pos.left, pos.top);
+    }
+
+    function injectStatusIcon() {
+        const existing = document.getElementById('rb-status-icon');
+        if (existing && existing !== badgeEl) return; // another copy already mounted
+        if (!badgeEl) {
+            badgeEl = createBadgeElement();
+            updateBadgeTooltip();
+            enableDrag();
+            document.addEventListener('fullscreenchange', mountBadge);
+            const keep = new MutationObserver(() => {
+                if (badgeEl && !badgeEl.isConnected) mountBadge();
+            });
+            if (document.documentElement) {
+                keep.observe(document.documentElement, { childList: true, subtree: true });
+            }
+        }
+        mountBadge();
+    }
+
+    injectStatusIcon();
+    if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', injectStatusIcon);
     }
 })();
