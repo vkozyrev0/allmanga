@@ -23,6 +23,16 @@ Blocked domains are listed in the `blockedDomains` array at the top of the scrip
 3. Replace the contents with [`redirect-blocking-extension.js`](redirect-blocking-extension.js) and save (Ctrl+S).
 4. Visit `allmanga.to` or `mkissa.to` — the script is active automatically.
 
+### AdGuard app (Windows / Mac / Android)
+
+AdGuard can list a userscript as installed without injecting it into the page. If you do not see an **orange 6px bar across the top** of mkissa.to, the userscript is not running. Use **User rules** instead (this path is always trusted):
+
+1. Open [`adguard-user-rules.txt`](adguard-user-rules.txt) and copy both rules.
+2. AdGuard → **Settings → Filtering → User rules** (Windows/Mac: **Settings → User rules**).
+3. Paste, save, reload mkissa.to.
+
+You should see the orange top bar and a disc in the top-right. If those still do not appear, AdGuard is not injecting JavaScript into that browser (HTTPS filtering off, HTTP/3/QUIC bypass, or the AdGuard *browser extension* rather than the app). Use Tampermonkey in that case.
+
 ## Configuration
 
 To block additional domains, add them to the array near the top of the script:
@@ -53,6 +63,6 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.13 |
+| Version | 1.14 |
 | Match | `*://allmanga.to/*`, `*://mkissa.to/*` |
 | Grants | none |

@@ -226,6 +226,9 @@ test('injects a status badge containing an SVG icon', () => {
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
   assert.strictEqual(badge.getAttribute('popover'), null);
   assert.match(badge.title, /active/i);
+  const bar = window.document.getElementById('rb-status-bar');
+  assert.ok(bar, 'top activity bar should be present');
+  assert.strictEqual(bar.parentNode, window.document.documentElement);
 });
 
 test('re-appends the badge if the page removes it', async () => {

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.13
+// @version      1.14
 // @description  Prevents redirects to blocked domains on allmanga.to and mkissa.to by intercepting click events and rewriting URLs dynamically. Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -17,17 +17,36 @@
 // @include      http://mkissa.to/*
 // @include      https://allmanga.to/*
 // @run-at       document-end
+// @inject-into  page
 // @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
 // @updateURL    https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.js
-// @grant        none
+// @grant        unsafeWindow
 // ==/UserScript==
 
 (function() {
     'use strict';
-    
+
+    // AdGuard/TM may sandbox this script. Prefer the real page window so
+    // DOM writes and history/open hooks actually affect the site.
+    const W = (typeof unsafeWindow !== 'undefined' && unsafeWindow) ? unsafeWindow : window;
+    const D = W.document;
+
+    try {
+        boot();
+    } catch (err) {
+        try {
+            const bar = D.createElement('div');
+            bar.id = 'rb-status-bar';
+            bar.textContent = 'RB error: ' + (err && err.message ? err.message : err);
+            bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;background:#c92a2a;color:#fff;font:12px/20px sans-serif;padding:2px 8px';
+            (D.documentElement || D.body).appendChild(bar);
+        } catch (e2) { /* last resort failed */ }
+    }
+
+    function boot() {
     // Define blocked domains
     const blockedDomains = ['youtu-chan.com'];
-    const originalHostname = window.location.hostname;
+    const originalHostname = W.location.hostname;
 
     // --- Status / persistence -------------------------------------------------
     const POS_KEY = 'rb-icon-pos';       // saved badge position (viewport ratios)
@@ -36,13 +55,14 @@
     const ICON_MARGIN = 12;               // default gap from the viewport edge
 
     let badgeEl = null;
+    let barEl = null;
     let sessionBlocked = 0;               // blocks during this page load
     let totalBlocked = storageGet(TOTAL_KEY, 0, parseIntSafe); // persisted total
 
     // Small, defensive localStorage helpers (storage can throw in private mode)
     function storageGet(key, fallback, parse) {
         try {
-            const raw = localStorage.getItem(key);
+            const raw = W.localStorage.getItem(key);
             if (raw === null) return fallback;
             const value = parse ? parse(raw) : raw;
             return value === undefined ? fallback : value;
@@ -51,7 +71,7 @@
         }
     }
     function storageSet(key, value) {
-        try { localStorage.setItem(key, value); } catch (e) { /* ignore */ }
+        try { W.localStorage.setItem(key, value); } catch (e) { /* ignore */ }
     }
     function parseIntSafe(raw) {
         const n = parseInt(raw, 10);
@@ -77,7 +97,7 @@
         // Leave falsy URLs untouched (e.g. history.pushState(state, '', null))
         if (!url) return url;
         try {
-            const urlObj = new URL(url, window.location.origin);
+            const urlObj = new URL(url, W.location.origin);
             if (blockedDomains.some(domain => urlObj.hostname.includes(domain))) {
                 const correctedUrl = `https://${originalHostname}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
                 console.log(`Rewrote URL from ${url} to ${correctedUrl}`);
@@ -91,7 +111,7 @@
     }
     
     // Intercept click events on the document
-    document.addEventListener('click', function(event) {
+    D.addEventListener('click', function(event) {
         const target = event.target.closest('a, button, [onclick]');
         if (target) {
             // Check for href (anchor tags)
@@ -100,7 +120,7 @@
                 if (newUrl !== target.href) {
                     event.preventDefault(); // Stop original navigation
                     recordBlock();
-                    window.location.href = newUrl; // Navigate to corrected URL
+                    W.location.href = newUrl; // Navigate to corrected URL
                 }
             }
             // Check for onclick handlers
@@ -112,7 +132,7 @@
                     if (newUrl !== href) {
                         event.preventDefault(); // Prevent default onclick behavior
                         recordBlock();
-                        window.location.href = newUrl;
+                        W.location.href = newUrl;
                     }
                 }
             }
@@ -136,9 +156,9 @@
     });
     
     function observeScripts() {
-        if (!document.documentElement) return;
+        if (!D.documentElement) return;
         try {
-            scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
+            scriptObserver.observe(D.documentElement, { childList: true, subtree: true });
         } catch (e) {
             console.log('Redirect blocker: script observer failed', e);
         }
@@ -146,23 +166,23 @@
     observeScripts();
     
     // Override navigation methods as a fallback
-    const originalPushState = history.pushState;
-    history.pushState = function(state, title, url) {
+    const originalPushState = W.history.pushState;
+    W.history.pushState = function(state, title, url) {
         const newUrl = rewriteUrl(url);
         if (newUrl !== url) recordBlock();
-        return originalPushState.call(history, state, title, newUrl);
+        return originalPushState.call(W.history, state, title, newUrl);
     };
 
-    const originalReplaceState = history.replaceState;
-    history.replaceState = function(state, title, url) {
+    const originalReplaceState = W.history.replaceState;
+    W.history.replaceState = function(state, title, url) {
         const newUrl = rewriteUrl(url);
         if (newUrl !== url) recordBlock();
-        return originalReplaceState.call(history, state, title, newUrl);
+        return originalReplaceState.call(W.history, state, title, newUrl);
     };
     
     // Block pop-ups and external window openings
-    const originalWindowOpen = window.open;
-    window.open = function(url, ...args) {
+    const originalWindowOpen = W.open;
+    W.open = function(url, ...args) {
         const newUrl = rewriteUrl(url);
         // Block when the URL was rewritten (blocked domain detected)
         if (newUrl !== url) {
@@ -171,7 +191,7 @@
             return null;
         }
         // Allow same-domain opens or pass through to original
-        return originalWindowOpen.call(window, newUrl, ...args);
+        return originalWindowOpen.call(W, newUrl, ...args);
     };
 
     // --- Status badge (draggable, position-remembering) ----------------------
@@ -181,8 +201,8 @@
     }
 
     // Largest valid top-left coords so the badge stays fully on screen
-    function maxLeft() { return Math.max(0, window.innerWidth - ICON_SIZE); }
-    function maxTop() { return Math.max(0, window.innerHeight - ICON_SIZE); }
+    function maxLeft() { return Math.max(0, W.innerWidth - ICON_SIZE); }
+    function maxTop() { return Math.max(0, W.innerHeight - ICON_SIZE); }
 
     // Position is stored relative to the nearest viewport corner so the badge
     // keeps the same distance from that corner when the window is resized.
@@ -190,22 +210,22 @@
 
     // Which corner is the badge (at left/top) closest to?
     function nearestCorner(left, top) {
-        const h = (left + ICON_SIZE / 2) < window.innerWidth / 2 ? 'L' : 'R';
-        const v = (top + ICON_SIZE / 2) < window.innerHeight / 2 ? 'T' : 'B';
+        const h = (left + ICON_SIZE / 2) < W.innerWidth / 2 ? 'L' : 'R';
+        const v = (top + ICON_SIZE / 2) < W.innerHeight / 2 ? 'T' : 'B';
         return h + v;
     }
 
     // Pixel position for a corner + its (dx, dy) inset from that corner's edges
     function positionFor(corner, dx, dy) {
-        const left = corner[0] === 'L' ? dx : window.innerWidth - ICON_SIZE - dx;
-        const top = corner[1] === 'T' ? dy : window.innerHeight - ICON_SIZE - dy;
+        const left = corner[0] === 'L' ? dx : W.innerWidth - ICON_SIZE - dx;
+        const top = corner[1] === 'T' ? dy : W.innerHeight - ICON_SIZE - dy;
         return { left: clamp(left, 0, maxLeft()), top: clamp(top, 0, maxTop()) };
     }
 
     // Inset of left/top from the given corner's edges
     function offsetsFor(corner, left, top) {
-        const dx = corner[0] === 'L' ? left : window.innerWidth - ICON_SIZE - left;
-        const dy = corner[1] === 'T' ? top : window.innerHeight - ICON_SIZE - top;
+        const dx = corner[0] === 'L' ? left : W.innerWidth - ICON_SIZE - left;
+        const dy = corner[1] === 'T' ? top : W.innerHeight - ICON_SIZE - top;
         return { dx: Math.max(0, Math.round(dx)), dy: Math.max(0, Math.round(dy)) };
     }
 
@@ -254,7 +274,7 @@
             event.preventDefault(); // avoid text selection while dragging
         });
 
-        window.addEventListener('mousemove', (event) => {
+        W.addEventListener('mousemove', (event) => {
             if (!dragging) return;
             const dx = event.clientX - startMouseX;
             const dy = event.clientY - startMouseY;
@@ -262,7 +282,7 @@
             applyPosition(startLeft + dx, startTop + dy);
         });
 
-        window.addEventListener('mouseup', () => {
+        W.addEventListener('mouseup', () => {
             if (!dragging) return;
             dragging = false;
             badgeEl.style.cursor = 'grab';
@@ -272,7 +292,7 @@
         });
 
         // Keep the relative position when the window is resized
-        window.addEventListener('resize', () => {
+        W.addEventListener('resize', () => {
             const pos = resolvePosition();
             applyPosition(pos.left, pos.top);
         });
@@ -282,20 +302,20 @@
     // Types / innerHTML CSP on the host page cannot strip the icon.
     function createBadgeSvg() {
         const ns = 'http://www.w3.org/2000/svg';
-        const svg = document.createElementNS(ns, 'svg');
+        const svg = D.createElementNS(ns, 'svg');
         svg.setAttribute('viewBox', '0 0 24 24');
         svg.setAttribute('width', String(ICON_SIZE));
         svg.setAttribute('height', String(ICON_SIZE));
         svg.style.pointerEvents = 'none';
 
-        const circle = document.createElementNS(ns, 'circle');
+        const circle = D.createElementNS(ns, 'circle');
         circle.setAttribute('cx', '12');
         circle.setAttribute('cy', '12');
         circle.setAttribute('r', '11');
         circle.setAttribute('fill', '#f76707');
         svg.appendChild(circle);
 
-        const g = document.createElementNS(ns, 'g');
+        const g = D.createElementNS(ns, 'g');
         g.setAttribute('fill', 'none');
         g.setAttribute('stroke', '#ffffff');
         g.setAttribute('stroke-width', '2');
@@ -307,7 +327,7 @@
             'M6.5 6.5l-1 -1',
             'M18.5 18.5l1 1'
         ].forEach((d) => {
-            const path = document.createElementNS(ns, 'path');
+            const path = D.createElementNS(ns, 'path');
             path.setAttribute('d', d);
             g.appendChild(path);
         });
@@ -316,7 +336,7 @@
     }
 
     function createBadgeElement() {
-        const badge = document.createElement('div');
+        const badge = D.createElement('div');
         badge.id = 'rb-status-icon';
         // Do not use the popover attribute: UA CSS is `display:none !important`
         // until showPopover() succeeds, and AdGuard's page world often has no
@@ -348,38 +368,65 @@
         return badge;
     }
 
+    function createBarElement() {
+        const bar = D.createElement('div');
+        bar.id = 'rb-status-bar';
+        bar.style.cssText = [
+            'display:block',
+            'position:fixed',
+            'top:0',
+            'left:0',
+            'right:0',
+            'height:6px',
+            'background:#f76707',
+            'z-index:2147483647',
+            'pointer-events:none'
+        ].join(';');
+        bar.style.setProperty('display', 'block', 'important');
+        bar.style.setProperty('visibility', 'visible', 'important');
+        return bar;
+    }
+
+    function nativeAppend(parent, node) {
+        if (!parent || !node || node.parentNode === parent) return;
+        Element.prototype.appendChild.call(parent, node);
+    }
+
     // Prefer <html> over <body>: SvelteKit (mkissa chapter reader) replaces
     // body during hydrate. If the reader goes fullscreen, move the badge
     // into the fullscreen element or it disappears.
     function mountBadge() {
-        if (!badgeEl) return;
-        const parent = document.fullscreenElement || document.documentElement;
+        const parent = D.fullscreenElement || D.documentElement;
         if (!parent) return;
         try {
-            if (badgeEl.parentNode !== parent) {
-                Element.prototype.appendChild.call(parent, badgeEl);
-            }
+            if (badgeEl) nativeAppend(parent, badgeEl);
+            if (barEl) nativeAppend(parent, barEl);
         } catch (e) {
             console.log('Redirect blocker: mount failed', e);
         }
-        const pos = resolvePosition();
-        applyPosition(pos.left, pos.top);
+        if (badgeEl) {
+            const pos = resolvePosition();
+            applyPosition(pos.left, pos.top);
+        }
     }
 
     function injectStatusIcon() {
-        const existing = document.getElementById('rb-status-icon');
+        const existing = D.getElementById('rb-status-icon');
         if (existing && existing !== badgeEl) return; // another copy already mounted
         if (!badgeEl) {
             badgeEl = createBadgeElement();
+            barEl = createBarElement();
             updateBadgeTooltip();
             enableDrag();
-            document.addEventListener('fullscreenchange', mountBadge);
+            D.addEventListener('fullscreenchange', mountBadge);
             const keep = new MutationObserver(() => {
-                if (badgeEl && !badgeEl.isConnected) mountBadge();
+                if ((badgeEl && !badgeEl.isConnected) || (barEl && !barEl.isConnected)) {
+                    mountBadge();
+                }
             });
-            if (document.documentElement) {
+            if (D.documentElement) {
                 try {
-                    keep.observe(document.documentElement, { childList: true, subtree: true });
+                    keep.observe(D.documentElement, { childList: true, subtree: true });
                 } catch (e) { /* document not ready */ }
             }
         }
@@ -389,10 +436,10 @@
 
     function bootBadge() {
         injectStatusIcon();
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', injectStatusIcon);
+        if (D.readyState === 'loading') {
+            D.addEventListener('DOMContentLoaded', injectStatusIcon);
         }
-        window.addEventListener('load', injectStatusIcon);
+        W.addEventListener('load', injectStatusIcon);
         // SPA hydrate / reader overlay can strip or cover the node after load.
         // Skip the poll in jsdom so the test suite does not sit on the timer.
         if (typeof navigator === 'undefined' || !/jsdom/i.test(navigator.userAgent)) {
@@ -406,4 +453,5 @@
         }
     }
     bootBadge();
+    }
 })();
