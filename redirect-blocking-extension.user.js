@@ -1,21 +1,15 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.19
+// @version      1.20
 // @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
-// @match        *://www.allmanga.to/*
+// @match        *://*.allmanga.to/*
 // @match        *://mkissa.to/*
-// @match        *://www.mkissa.to/*
 // @match        *://*.mkissa.to/*
+// @match        *://mkissa.net/*
 // @match        *://*.mkissa.net/*
-// @match        https://mkissa.to/*
-// @match        https://www.mkissa.to/*
-// @include      https://mkissa.to/*
-// @include      https://www.mkissa.to/*
-// @include      http://mkissa.to/*
-// @include      https://allmanga.to/*
 // @run-at       document-start
 // @inject-into  page
 // @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.user.js
@@ -64,6 +58,7 @@
     let toggleItem = null;
     let glyphGroup = null;
     let discEl = null;
+    let countEl = null;
     let menuOpen = false;
     let pointerOnBadge = false;
     let pointerOnMenu = false;
@@ -130,6 +125,7 @@
         totalBlocked++;
         storageSet(TOTAL_KEY, String(totalBlocked));
         updateBadgeTooltip();
+        updateCountBadge();
     }
     function updateBadgeTooltip() {
         if (!badgeEl) return;
@@ -142,6 +138,20 @@
         badgeEl.setAttribute('aria-label', label);
         badgeEl.setAttribute('data-rb-enabled', isSiteEnabled() ? '1' : '0');
         badgeEl.setAttribute('data-rb-site', host);
+    }
+
+    function updateCountBadge() {
+        if (!countEl) return;
+        if (sessionBlocked <= 0) {
+            countEl.textContent = '';
+            countEl.style.setProperty('display', 'none', 'important');
+            countEl.setAttribute('data-rb-count', '0');
+            return;
+        }
+        const label = sessionBlocked > 99 ? '99+' : String(sessionBlocked);
+        countEl.textContent = label;
+        countEl.setAttribute('data-rb-count', label);
+        countEl.style.setProperty('display', 'block', 'important');
     }
 
     function paintGlyph() {
@@ -179,6 +189,7 @@
         paintGlyph();
         badgeEl.style.setProperty('display', 'block', 'important');
         updateBadgeTooltip();
+        updateCountBadge();
         if (menuOpen) updateMenuLabels();
     }
 
@@ -660,8 +671,7 @@
             'margin:0',
             'padding:0',
             'border:none',
-            'border-radius:50%',
-            'overflow:hidden',
+            'overflow:visible',
             'background:transparent',
             'box-shadow:none',
             'outline:none'
@@ -676,6 +686,27 @@
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
         badge.addEventListener('mouseleave', () => { badge.style.opacity = '1'; });
         badge.appendChild(createBadgeSvg());
+        countEl = D.createElement('div');
+        countEl.id = 'rb-block-count';
+        countEl.setAttribute('aria-hidden', 'true');
+        [
+            ['display', 'none'],
+            ['position', 'absolute'],
+            ['right', '-5px'],
+            ['bottom', '-5px'],
+            ['min-width', '13px'],
+            ['height', '13px'],
+            ['padding', '0 3px'],
+            ['box-sizing', 'border-box'],
+            ['border-radius', '8px'],
+            ['background', '#111111'],
+            ['color', '#ffffff'],
+            ['font', '700 9px/13px system-ui,sans-serif'],
+            ['text-align', 'center'],
+            ['pointer-events', 'none'],
+            ['z-index', '1']
+        ].forEach(([prop, value]) => countEl.style.setProperty(prop, value, 'important'));
+        badge.appendChild(countEl);
         return badge;
     }
 

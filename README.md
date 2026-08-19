@@ -23,6 +23,7 @@ Known ad-script hosts live in the `blockedDomains` array (used to strip injected
 |-------|------------|
 | Blocking **on** for this site | Orange disc, unbroken chain |
 | Blocking **off** for this site | Gray disc, broken chain with a slash |
+| Blocks this session | Small dark count on the disc (hidden while the count is 0) |
 
 - **Hover or left-click** the disc to open the menu (block counts + **Disable on this site** / **Enable on this site**). The choice is remembered per host, so mkissa can be off while allmanga stays on.
 - **Drag** the disc to move it. The spot is saved as an offset from the nearest viewport corner, so it stays put when the window is resized.
@@ -73,6 +74,7 @@ The script has no build step. There is a test suite that loads the unmodified sc
 npm install   # one-time: installs jsdom (dev dependency)
 npm test      # run the behavioral test suite
 npm run check # syntax-check the script with `node --check`
+npm run sync  # rewrite redirect-blocking-extension.user.js from the .js file
 ```
 
 The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-script removal, the `history` wrappers, the mkissa next-page hijack to `isekai2nd.com`, the status badge (position, drag, hover/click menu, per-site enable/disable, glyph states), and regressions for falsy and unparseable URLs. Requires Node 18+ (developed on Node 26).
@@ -81,7 +83,7 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.19 |
+| Version | 1.20 |
 | Match | `allmanga.to`, `mkissa.to`, `mkissa.net` (with `www` and `*.` variants) |
 | Run at | `document-start` |
 | Inject | page (`@inject-into page`, `@grant unsafeWindow`) |

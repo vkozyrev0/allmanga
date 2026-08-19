@@ -369,7 +369,6 @@ test('does not draw a white frame around the badge', () => {
   const border = badge.style.border || '';
   assert.ok(!/#fff|#ffffff|white/i.test(shadow), 'box-shadow must not be a white ring');
   assert.ok(!/#fff|#ffffff|white/i.test(border), 'border must not be a white ring');
-  assert.match(badge.style.borderRadius, /50%/);
 });
 
 test('re-appends the badge if the page removes it', async () => {
@@ -421,6 +420,19 @@ test('tooltip counts each blocked redirect this session', () => {
   assert.match(badge.getAttribute('aria-label'), /1 blocked this session/);
   window.history.pushState({}, '', 'https://youtu-chan.com/b');
   assert.match(badge.getAttribute('aria-label'), /2 blocked this session/);
+});
+
+test('block count on the disc stays hidden at zero and shows the session total', () => {
+  const { window } = load();
+  const count = window.document.getElementById('rb-block-count');
+  assert.ok(count, 'count badge should exist');
+  assert.strictEqual(count.style.display, 'none');
+  assert.strictEqual(count.getAttribute('data-rb-count'), '0');
+  window.open('https://youtu-chan.com/a');
+  assert.strictEqual(count.textContent, '1');
+  assert.notStrictEqual(count.style.display, 'none');
+  window.history.pushState({}, '', 'https://youtu-chan.com/b');
+  assert.strictEqual(count.textContent, '2');
 });
 
 test('total count persists across loads via localStorage', () => {
@@ -655,6 +667,26 @@ test('menu on mkissa.to names that host', () => {
   const badge = window.document.getElementById('rb-status-icon');
   openIconMenu(window, badge);
   assert.match(menuItem(window, 'rb-menu-toggle').textContent, /Disable on mkissa\.to/i);
+});
+
+test('.user.js is the main script with user.js update URLs', () => {
+  const js = fs.readFileSync(
+    path.join(__dirname, '..', 'redirect-blocking-extension.js'),
+    'utf8'
+  );
+  const user = fs.readFileSync(
+    path.join(__dirname, '..', 'redirect-blocking-extension.user.js'),
+    'utf8'
+  );
+  const normalize = (s) => s.replace(/\r\n/g, '\n');
+  assert.strictEqual(
+    normalize(user),
+    normalize(js.replace(/redirect-blocking-extension\.js/g, 'redirect-blocking-extension.user.js'))
+  );
+});
+
+test('userscript header has no leftover @include lines', () => {
+  assert.doesNotMatch(SCRIPT_SOURCE, /@include/);
 });
 
 test('right-click does not start a drag', () => {

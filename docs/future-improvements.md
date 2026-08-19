@@ -12,7 +12,7 @@ Ideas only. None of these are scheduled. The script works for the hijacks we hav
 
 ## Badge and controls
 
-- **Count on the disc.** A small “3” on the orange disc would show activity without opening the menu. Easy to make noisy; keep it optional.
+- ~~**Count on the disc.**~~ Done in 1.20: session count appears on the disc once at least one redirect is blocked.
 - **Keyboard toggle.** e.g. a chord that does not collide with the reader’s next/prev keys. Useful if the disc is under a fullscreen overlay we failed to reparent.
 - **Userscript-manager menu.** `GM_registerMenuCommand` (“Enable on this site”, “Reset position”) needs a grant and may fight `@inject-into page`. Worth a careful spike, not a drive-by.
 - **Shadow DOM for the disc itself.** The menu already uses an open shadow so page CSS cannot hide it. The disc is still a light-DOM `div` + SVG. A closed/open shadow would survive more aggressive reader styles.
@@ -21,8 +21,8 @@ Ideas only. None of these are scheduled. The script works for the hijacks we hav
 
 ## Install and maintenance
 
-- **One public URL.** `.js` and `.user.js` differ only in `@downloadURL` / `@updateURL`. Generate one from the other in CI so they cannot drift.
-- **Trim `@match` / `@include` duplicates.** The header accumulated overlapping patterns while debugging AdGuard. A short, complete set would be easier to reason about.
+- ~~**One public URL / keep `.js` and `.user.js` in sync.**~~ Done in 1.20: `npm run sync` copies the `.js` file and retargets the update URLs; a test fails if they drift.
+- ~~**Trim `@match` / `@include` duplicates.**~~ Done in 1.20: one `@match` pair per apex host plus `*.` .
 - **Do not bring back a Chrome extension** unless AdGuard injection fails on a browser someone actually uses. Two artifacts was the worse product.
 - **Document Ctrl+Shift+R in the userscript `@description`.** People will keep using Ctrl+F5 and report a missing badge.
 
