@@ -358,9 +358,17 @@ test('injects a status badge containing an SVG icon', () => {
   assert.ok(badge.querySelector('svg'), 'badge should contain an svg');
   assert.strictEqual(badge.getAttribute('popover'), null);
   assert.match(badge.title, /active/i);
-  const bar = window.document.getElementById('rb-status-bar');
-  assert.ok(bar, 'top activity bar should be present');
-  assert.strictEqual(bar.parentNode, window.document.documentElement);
+  assert.strictEqual(window.document.getElementById('rb-status-bar'), null);
+});
+
+test('does not draw a white frame around the badge', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const shadow = badge.style.boxShadow || '';
+  const border = badge.style.border || '';
+  assert.ok(!/#fff|#ffffff|white/i.test(shadow), 'box-shadow must not be a white ring');
+  assert.ok(!/#fff|#ffffff|white/i.test(border), 'border must not be a white ring');
+  assert.match(badge.style.borderRadius, /50%/);
 });
 
 test('re-appends the badge if the page removes it', async () => {
@@ -502,4 +510,92 @@ test('keeps its distance from the anchored corner when the viewport shrinks', ()
   // Still 12px from the bottom-right corner: left = 800-22-12, top = 600-22-12
   assert.strictEqual(badge.style.left, '766px');
   assert.strictEqual(badge.style.top, '566px');
+});
+
+// --- right-click menu ------------------------------------------------------
+
+function openIconMenu(window, badge) {
+  const ev = new window.MouseEvent('contextmenu', {
+    bubbles: true, cancelable: true, clientX: 990, clientY: 20,
+  });
+  badge.dispatchEvent(ev);
+  return ev;
+}
+
+test('right-click on the badge opens a custom menu and cancels the native one', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const ev = openIconMenu(window, badge);
+  assert.strictEqual(ev.defaultPrevented, true);
+  const menu = window.document.getElementById('rb-icon-menu');
+  assert.ok(menu, 'custom menu should be present');
+  assert.notStrictEqual(menu.style.display, 'none');
+  assert.ok(window.document.getElementById('rb-menu-toggle'));
+  assert.ok(window.document.getElementById('rb-menu-hide'));
+});
+
+test('hide icon from the menu hides the badge and persists', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openIconMenu(window, badge);
+  window.document.getElementById('rb-menu-hide').click();
+  assert.strictEqual(badge.style.display, 'none');
+  assert.strictEqual(window.localStorage.getItem('rb-icon-hidden'), '1');
+});
+
+test('a hidden icon stays hidden after reload', () => {
+  const { window } = load({ storage: { 'rb-icon-hidden': '1' } });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.ok(badge, 'badge node is kept so it can be shown again');
+  assert.strictEqual(badge.style.display, 'none');
+});
+
+test('disable from the menu pauses blocking and greys the icon', () => {
+  const { window, openCalls } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openIconMenu(window, badge);
+  const toggle = window.document.getElementById('rb-menu-toggle');
+  assert.match(toggle.textContent, /Disable/i);
+  toggle.click();
+  assert.strictEqual(window.localStorage.getItem('rb-enabled'), '0');
+  assert.match(badge.title, /disabled/i);
+  assert.strictEqual(badge.querySelector('circle').getAttribute('fill'), '#868e96');
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('enable from the menu restores blocking', () => {
+  const { window, openCalls } = load({ storage: { 'rb-enabled': '0' } });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.match(badge.title, /disabled/i);
+  openIconMenu(window, badge);
+  const toggle = window.document.getElementById('rb-menu-toggle');
+  assert.match(toggle.textContent, /Enable/i);
+  toggle.click();
+  assert.strictEqual(window.localStorage.getItem('rb-enabled'), '1');
+  assert.match(badge.title, /active/i);
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
+  assert.strictEqual(openCalls.length, 0);
+});
+
+test('disabled state persists across reloads', () => {
+  const { window, openCalls } = load({ storage: { 'rb-enabled': '0' } });
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('right-click does not start a drag', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const startLeft = badge.style.left;
+  const startTop = badge.style.top;
+  badge.dispatchEvent(new window.MouseEvent('mousedown', {
+    bubbles: true, button: 2, clientX: 500, clientY: 500,
+  }));
+  window.dispatchEvent(new window.MouseEvent('mousemove', {
+    bubbles: true, clientX: 400, clientY: 400,
+  }));
+  window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }));
+  assert.strictEqual(badge.style.left, startLeft);
+  assert.strictEqual(badge.style.top, startTop);
 });

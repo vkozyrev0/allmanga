@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.15
+// @version      1.16
 // @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
 // @author       You
 // @match        *://allmanga.to/*
@@ -53,13 +53,20 @@
     // --- Status / persistence -------------------------------------------------
     const POS_KEY = 'rb-icon-pos';       // saved badge position (viewport ratios)
     const TOTAL_KEY = 'rb-blocked-total'; // cumulative blocks across page loads
+    const HIDDEN_KEY = 'rb-icon-hidden';  // '1' = status badge hidden
+    const ENABLED_KEY = 'rb-enabled';     // '0' = redirect blocking paused
     const ICON_SIZE = 22;                 // badge width/height in px
     const ICON_MARGIN = 12;               // default gap from the viewport edge
 
     let badgeEl = null;
-    let barEl = null;
+    let menuEl = null;
+    let hideItem = null;
+    let toggleItem = null;
+    let menuOpen = false;
     let sessionBlocked = 0;               // blocks during this page load
     let totalBlocked = storageGet(TOTAL_KEY, 0, parseIntSafe); // persisted total
+    let iconHidden = storageGet(HIDDEN_KEY, false, (raw) => raw === '1');
+    let blockerEnabled = storageGet(ENABLED_KEY, true, (raw) => raw !== '0');
 
     // Small, defensive localStorage helpers (storage can throw in private mode)
     function storageGet(key, fallback, parse) {
@@ -89,9 +96,35 @@
     }
     function updateBadgeTooltip() {
         if (!badgeEl) return;
-        const label = `Redirect Blocker active — ${sessionBlocked} blocked this session (${totalBlocked} total)`;
+        const label = blockerEnabled
+            ? `Redirect Blocker active — ${sessionBlocked} blocked this session (${totalBlocked} total)`
+            : 'Redirect Blocker disabled — right-click to enable';
         badgeEl.title = label;
         badgeEl.setAttribute('aria-label', label);
+    }
+
+    function syncBadgeVisual() {
+        if (!badgeEl) return;
+        const circle = badgeEl.querySelector('circle');
+        if (circle) circle.setAttribute('fill', blockerEnabled ? '#f76707' : '#868e96');
+        badgeEl.style.setProperty('display', iconHidden ? 'none' : 'block', 'important');
+        updateBadgeTooltip();
+    }
+
+    function setBlockerEnabled(on) {
+        blockerEnabled = !!on;
+        storageSet(ENABLED_KEY, blockerEnabled ? '1' : '0');
+        syncBadgeVisual();
+    }
+
+    function setIconHidden(hidden) {
+        iconHidden = !!hidden;
+        storageSet(HIDDEN_KEY, iconHidden ? '1' : '0');
+        syncBadgeVisual();
+        if (iconHidden) {
+            hideMenu();
+            console.log('Redirect Blocker icon hidden. To show it again, run: localStorage.removeItem("rb-icon-hidden"); location.reload()');
+        }
     }
 
     function hostnameOf(url) {
@@ -127,6 +160,7 @@
 
     // Classify a navigation URL: allow, rewrite onto this host, or block (stay).
     function decide(url) {
+        if (!blockerEnabled) return { action: 'allow', url: url };
         if (!url) return { action: 'allow', url: url };
         try {
             const urlObj = new URL(String(url), W.location.origin);
@@ -241,6 +275,7 @@
 
     function sanitizeNode(node) {
         if (!node || node.nodeType !== 1) return;
+        if (!blockerEnabled) return;
         if (node.tagName === 'SCRIPT' && isBlockedScriptSrc(node.src)) {
             node.remove();
             recordBlock();
@@ -447,6 +482,7 @@
         let startLeft = 0, startTop = 0;
 
         badgeEl.addEventListener('mousedown', (event) => {
+            if (event.button !== 0) return; // left-click only; right-click is the menu
             dragging = true;
             moved = false;
             startMouseX = event.clientX;
@@ -538,36 +574,137 @@
             'margin:0',
             'padding:0',
             'border:none',
+            'border-radius:50%',
+            'overflow:hidden',
             'background:transparent',
-            'box-shadow:0 0 0 2px #fff,0 2px 8px rgba(0,0,0,0.5)'
+            'box-shadow:none',
+            'outline:none'
         ].join(';');
         badge.style.setProperty('display', 'block', 'important');
         badge.style.setProperty('visibility', 'visible', 'important');
         badge.style.setProperty('position', 'fixed', 'important');
         badge.style.setProperty('z-index', '2147483647', 'important');
+        badge.style.setProperty('box-shadow', 'none', 'important');
+        badge.style.setProperty('border', 'none', 'important');
+        badge.style.setProperty('outline', 'none', 'important');
         badge.addEventListener('mouseenter', () => { badge.style.opacity = '1'; });
         badge.addEventListener('mouseleave', () => { badge.style.opacity = '1'; });
+        badge.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            showMenu(event.clientX, event.clientY);
+        });
         badge.appendChild(createBadgeSvg());
         return badge;
     }
 
-    function createBarElement() {
-        const bar = D.createElement('div');
-        bar.id = 'rb-status-bar';
-        bar.style.cssText = [
+    function styleMenuItem(item) {
+        item.style.cssText = [
             'display:block',
-            'position:fixed',
-            'top:0',
-            'left:0',
-            'right:0',
-            'height:6px',
-            'background:#f76707',
-            'z-index:2147483647',
-            'pointer-events:none'
+            'width:100%',
+            'box-sizing:border-box',
+            'margin:0',
+            'padding:7px 12px',
+            'border:none',
+            'background:transparent',
+            'color:#f8f9fa',
+            'font:13px/1.3 system-ui,sans-serif',
+            'text-align:left',
+            'cursor:pointer',
+            'border-radius:4px'
         ].join(';');
-        bar.style.setProperty('display', 'block', 'important');
-        bar.style.setProperty('visibility', 'visible', 'important');
-        return bar;
+        item.addEventListener('mouseenter', () => { item.style.background = '#f76707'; });
+        item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+    }
+
+    function createMenuElement() {
+        const menu = D.createElement('div');
+        menu.id = 'rb-icon-menu';
+        menu.style.cssText = [
+            'display:none',
+            'position:fixed',
+            'z-index:2147483647',
+            'min-width:200px',
+            'padding:4px',
+            'margin:0',
+            'background:#1a1b1e',
+            'color:#f8f9fa',
+            'border:1px solid #373a40',
+            'border-radius:6px',
+            'box-shadow:0 8px 24px rgba(0,0,0,0.45)',
+            'user-select:none'
+        ].join(';');
+        menu.style.setProperty('position', 'fixed', 'important');
+        menu.style.setProperty('z-index', '2147483647', 'important');
+
+        toggleItem = D.createElement('button');
+        toggleItem.id = 'rb-menu-toggle';
+        toggleItem.type = 'button';
+        toggleItem.textContent = 'Disable redirect blocker';
+        styleMenuItem(toggleItem);
+        toggleItem.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setBlockerEnabled(!blockerEnabled);
+            hideMenu();
+        });
+
+        hideItem = D.createElement('button');
+        hideItem.id = 'rb-menu-hide';
+        hideItem.type = 'button';
+        hideItem.textContent = 'Hide icon';
+        styleMenuItem(hideItem);
+        hideItem.addEventListener('click', (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setIconHidden(true);
+        });
+
+        menu.appendChild(toggleItem);
+        menu.appendChild(hideItem);
+        return menu;
+    }
+
+    function updateMenuLabels() {
+        if (!toggleItem) return;
+        toggleItem.textContent = blockerEnabled ? 'Disable redirect blocker' : 'Enable redirect blocker';
+    }
+
+    function hideMenu() {
+        menuOpen = false;
+        if (menuEl) menuEl.style.setProperty('display', 'none', 'important');
+    }
+
+    function showMenu(clientX, clientY) {
+        if (!menuEl || iconHidden) return;
+        updateMenuLabels();
+        menuEl.style.setProperty('display', 'block', 'important');
+        const w = menuEl.offsetWidth || 210;
+        const h = menuEl.offsetHeight || 68;
+        let left = clientX;
+        let top = clientY;
+        if (left + w > W.innerWidth - 4) left = Math.max(4, W.innerWidth - w - 4);
+        if (top + h > W.innerHeight - 4) top = Math.max(4, W.innerHeight - h - 4);
+        if (left < 4) left = 4;
+        if (top < 4) top = 4;
+        menuEl.style.setProperty('left', Math.round(left) + 'px', 'important');
+        menuEl.style.setProperty('top', Math.round(top) + 'px', 'important');
+        menuEl.style.setProperty('right', 'auto', 'important');
+        menuEl.style.setProperty('bottom', 'auto', 'important');
+        menuOpen = true;
+    }
+
+    function enableMenuDismiss() {
+        W.addEventListener('mousedown', (event) => {
+            if (!menuOpen || !menuEl) return;
+            if (menuEl.contains(event.target)) return;
+            hideMenu();
+        }, true);
+        W.addEventListener('keydown', (event) => {
+            if (event.key === 'Escape') hideMenu();
+        });
+        W.addEventListener('resize', hideMenu);
+        D.addEventListener('scroll', hideMenu, true);
     }
 
     function nativeAppend(parent, node) {
@@ -583,13 +720,14 @@
         if (!parent) return;
         try {
             if (badgeEl) nativeAppend(parent, badgeEl);
-            if (barEl) nativeAppend(parent, barEl);
+            if (menuEl) nativeAppend(parent, menuEl);
         } catch (e) {
             console.log('Redirect blocker: mount failed', e);
         }
         if (badgeEl) {
             const pos = resolvePosition();
             applyPosition(pos.left, pos.top);
+            syncBadgeVisual();
         }
     }
 
@@ -598,12 +736,13 @@
         if (existing && existing !== badgeEl) return; // another copy already mounted
         if (!badgeEl) {
             badgeEl = createBadgeElement();
-            barEl = createBarElement();
-            updateBadgeTooltip();
+            menuEl = createMenuElement();
+            syncBadgeVisual();
             enableDrag();
+            enableMenuDismiss();
             D.addEventListener('fullscreenchange', mountBadge);
             const keep = new MutationObserver(() => {
-                if ((badgeEl && !badgeEl.isConnected) || (barEl && !barEl.isConnected)) {
+                if ((badgeEl && !badgeEl.isConnected) || (menuEl && !menuEl.isConnected)) {
                     mountBadge();
                 }
             });
@@ -617,7 +756,23 @@
         observeScripts();
     }
 
+    function registerShowIconCommand() {
+        try {
+            const gm = (typeof GM_registerMenuCommand === 'function')
+                ? GM_registerMenuCommand
+                : (typeof GM !== 'undefined' && GM && typeof GM.registerMenuCommand === 'function'
+                    ? GM.registerMenuCommand.bind(GM)
+                    : null);
+            if (!gm) return;
+            gm('Show Redirect Blocker icon', () => {
+                setIconHidden(false);
+                mountBadge();
+            });
+        } catch (e) { /* page world often has no GM menu API */ }
+    }
+
     function bootBadge() {
+        registerShowIconCommand();
         injectStatusIcon();
         if (D.readyState === 'loading') {
             D.addEventListener('DOMContentLoaded', injectStatusIcon);
