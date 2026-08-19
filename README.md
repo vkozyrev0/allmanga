@@ -18,16 +18,28 @@ Blocked domains are listed in the `blockedDomains` array at the top of the scrip
 
 ## Installation
 
-**Tampermonkey (recommended on Windows):**
+### Chrome / Edge extension (Windows — no Tampermonkey)
 
-1. Install [Tampermonkey](https://www.tampermonkey.net/) for Chrome or Edge.
-2. In `edge://extensions` or `chrome://extensions`, turn on **Developer mode**. Open Tampermonkey → **Details** and enable **Allow user scripts** (required on Chrome/Edge 138+).
-3. Open this install URL:  
-   https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.user.js  
-   Tampermonkey will prompt to install. Confirm.
-4. Visit `mkissa.to` or `allmanga.to` — orange disc in the top-right means it is running.
+mkissa.to is on Cloudflare and prefers **HTTP/3 (QUIC)**. Chrome will not let AdGuard decrypt HTTP/3, so AdGuard userscripts and user rules never run on that tab. A real browser extension injects into the page directly, so QUIC does not matter.
 
-Manual: Tampermonkey dashboard → **Create a new script** → paste [`redirect-blocking-extension.js`](redirect-blocking-extension.js) → save (Ctrl+S).
+1. Clone or download this repo.
+2. Open `chrome://extensions` or `edge://extensions`.
+3. Turn on **Developer mode**.
+4. **Load unpacked** → select the [`chrome-extension`](chrome-extension/) folder.
+5. Open `https://mkissa.to/...` — orange disc in the **top-right**.
+
+The extension also blocks `youtu-chan.com` at the network layer.
+
+### Why AdGuard on Windows did nothing
+
+AdGuard’s own docs: *“Chrome-based browsers do not accept user certificates, so HTTP/3 filtering is not supported in them.”* Cosmetic CSS and JS user rules need the same MITM path, so they fail too.
+
+To force AdGuard’s existing userscript to run, disable QUIC then reload:
+
+- Chrome: `chrome://flags/#enable-quic` → **Disabled** → relaunch
+- Edge: `edge://flags/#enable-quic` → **Disabled** → relaunch
+
+Then the 1.14 userscript / user rules can inject. The unpacked extension does not need this.
 
 ### AdGuard app (Windows / Mac / Android)
 

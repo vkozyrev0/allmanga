@@ -5,7 +5,8 @@
   "description": "Tampermonkey userscript that blocks redirects on allmanga.to and mkissa.to",
   "scripts": {
     "test": "node --test",
-    "check": "node --check redirect-blocking-extension.js"
+    "check": "node --check redirect-blocking-extension.js",
+    "sync-extension": "node -e \"require('fs').copyFileSync('redirect-blocking-extension.js','chrome-extension/content.js')\""
   },
   "devDependencies": {
     "jsdom": "^29.1.1"

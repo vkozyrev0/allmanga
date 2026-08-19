@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "allmanga/mkissa Redirect Blocker",
+  "version": "1.15.0",
+  "description": "Blocks off-site redirects on allmanga.to and mkissa.to. Runs in the page (not via AdGuard MITM).",
+  "content_scripts": [
+    {
+      "matches": [
+        "*://allmanga.to/*",
+        "*://*.allmanga.to/*",
+        "*://mkissa.to/*",
+        "*://*.mkissa.to/*",
+        "*://*.mkissa.net/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ],
+  "permissions": ["declarativeNetRequest"],
+  "host_permissions": [
+    "*://allmanga.to/*",
+    "*://*.allmanga.to/*",
+    "*://mkissa.to/*",
+    "*://*.mkissa.to/*",
+    "*://*.mkissa.net/*",
+    "*://*.youtu-chan.com/*"
+  ],
+  "declarative_net_request": {
+    "rule_resources": [
+      {
+        "id": "block_known_redirects",
+        "enabled": true,
+        "path": "rules.json"
+      }
+    ]
+  }
+}

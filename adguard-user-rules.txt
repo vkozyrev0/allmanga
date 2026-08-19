@@ -8,9 +8,14 @@
 ! two rules → Save. Then reload mkissa.to. You should see a 6px orange
 ! bar across the top and an "RB" disc in the top-right.
 !
-! If the bar still does not appear, AdGuard is not injecting JavaScript
-! into this browser (HTTPS filtering / QUIC / browser-extension mode).
-! Use Tampermonkey instead.
+! If the bar still does not appear, Chrome is talking to Cloudflare over
+! HTTP/3 (QUIC). AdGuard cannot decrypt Chrome HTTP/3, so no userscript,
+! cosmetic, or JS rule ever reaches the page. Either:
+!   1. Load the chrome-extension/ folder as an unpacked extension, or
+!   2. Disable QUIC: chrome://flags/#enable-quic → Disabled, restart, retry.
+!
+! Network block still helps when AdGuard sees DNS/TCP (not QUIC):
+||youtu-chan.com^
 
 mkissa.to,www.mkissa.to,allmanga.to,www.allmanga.to##html:style(border-top: 6px solid #f76707 !important)
 mkissa.to,www.mkissa.to,allmanga.to,www.allmanga.to#%#(()=>{try{var W=window,D=W.document;if(!D||D.getElementById("rb-status-icon"))return;var b=D.createElement("div");b.id="rb-status-icon";b.title="Redirect Blocker active";b.style.cssText="position:fixed;top:12px;right:12px;z-index:2147483647;width:22px;height:22px;border-radius:11px;background:#f76707;box-shadow:0 0 0 2px #fff";(D.documentElement||D.body).appendChild(b);var blocked=["youtu-chan.com"],host=W.location.hostname;function rw(u){if(!u)return u;try{var x=new URL(u,W.location.origin);if(blocked.some(function(d){return x.hostname.indexOf(d)!==-1;}))return"https://"+host+x.pathname+x.search+x.hash}catch(e){}return u}var oOpen=W.open;W.open=function(u){var n=rw(u);if(n!==u)return null;return oOpen.apply(W,arguments)};var ops=W.history.pushState,ors=W.history.replaceState;W.history.pushState=function(s,t,u){return ops.call(W.history,s,t,rw(u))};W.history.replaceState=function(s,t,u){return ors.call(W.history,s,t,rw(u))};D.addEventListener("click",function(e){var t=e.target.closest&&e.target.closest("a");if(!t||!t.href)return;var n=rw(t.href);if(n!==t.href){e.preventDefault();W.location.href=n}},true)}catch(e){}})();
