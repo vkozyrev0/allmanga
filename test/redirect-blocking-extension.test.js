@@ -928,7 +928,7 @@ test('rejects a duplicate target site', () => {
   openSettings(window, badge);
   modalById(window, 'rb-target-add-input').value = 'youtu-chan.com';
   modalById(window, 'rb-target-add-btn').click();
-  assert.match(modalById(window, 'rb-modal-error').textContent, /already in the target list/i);
+  assert.match(modalById(window, 'rb-modal-error').textContent, /already in the block list/i);
 });
 
 test('removing a target site stops stripping its scripts', async () => {

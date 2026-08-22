@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Redirect Blocker
 // @namespace    http://tampermonkey.net/
-// @version      1.25
+// @version      1.26
 // @description  Prevents off-site redirects. The status badge appears on every site so you can add the current host (or any URL) from the settings modal.
 // @author       You
 // @match        http://*/*
@@ -305,7 +305,7 @@
         const parsed = parseUrlOrHost(value);
         if (!parsed) return 'Enter a hostname or URL to block (example: isekai2nd.com)';
         if (targetSites.some((site) => site.host === parsed.hostname)) {
-            return parsed.hostname + ' is already in the target list';
+            return parsed.hostname + ' is already in the block list';
         }
         targetSites.push({ host: parsed.hostname, enabled: true });
         persistTargets();
@@ -1080,12 +1080,12 @@
         modalStatus = el('p', { className: 'status', id: 'rb-modal-status' });
 
         const sitesSection = el('section', { className: 'section' });
-        sitesSection.appendChild(el('h3', { className: 'label' }, 'Source sites'));
-        sitesSection.appendChild(el('p', { className: 'hint' }, 'The badge appears on every site. Add this site (or any URL) to turn blocking on here. Uncheck a listed site to pause it; remove it to drop it from the family list.'));
+        sitesSection.appendChild(el('h3', { className: 'label' }, 'Protected sites'));
+        sitesSection.appendChild(el('p', { className: 'hint' }, 'Sites where the blocker runs. Add this site (or any URL) to turn blocking on here. Uncheck to pause; remove to drop it.'));
         addCurrentBar = el('div', { className: 'add-current', id: 'rb-add-current' });
         const addCurrentCopy = el('div', { className: 'copy' });
         addCurrentCopy.appendChild(el('strong', { id: 'rb-add-current-host' }, ''));
-        addCurrentCopy.appendChild(el('span', null, 'Not in the source list — blocking is off here.'));
+        addCurrentCopy.appendChild(el('span', null, 'Not a protected site — blocking is off here.'));
         const addCurrentBtn = el('button', { id: 'rb-add-current-btn', type: 'button' }, 'Add this site');
         addCurrentBtn.addEventListener('click', () => {
             const err = addSourceSite(siteKey());
@@ -1104,7 +1104,7 @@
             spellcheck: 'false',
             autocomplete: 'off'
         });
-        const siteAdd = el('button', { id: 'rb-site-add-btn', type: 'button' }, 'Add site');
+        const siteAdd = el('button', { id: 'rb-site-add-btn', type: 'button' }, 'Add');
         siteAdd.addEventListener('click', () => {
             const err = addSourceSite(siteInput.value);
             if (err) showModalError(err);
@@ -1121,8 +1121,8 @@
         sitesSection.appendChild(siteForm);
 
         const targetsSection = el('section', { className: 'section' });
-        targetsSection.appendChild(el('h3', { className: 'label' }, 'Target sites'));
-        targetsSection.appendChild(el('p', { className: 'hint' }, 'Sites you do not want to be redirected to. Added hosts are blocked and their injected scripts are stripped. Uncheck to pause one; remove to drop it.'));
+        targetsSection.appendChild(el('h3', { className: 'label' }, 'Blocked destinations'));
+        targetsSection.appendChild(el('p', { className: 'hint' }, 'Hosts you do not want to be sent to. Added hosts are blocked and their scripts are stripped. Uncheck to pause one; remove to drop it.'));
         targetListEl = el('div', { id: 'rb-target-list' });
         targetsSection.appendChild(targetListEl);
         const targetForm = el('div', { className: 'form' });
@@ -1133,7 +1133,7 @@
             spellcheck: 'false',
             autocomplete: 'off'
         });
-        const targetAdd = el('button', { id: 'rb-target-add-btn', type: 'button' }, 'Add target');
+        const targetAdd = el('button', { id: 'rb-target-add-btn', type: 'button' }, 'Add');
         targetAdd.addEventListener('click', () => {
             const err = addTargetSite(targetInput.value);
             if (err) showModalError(err);
@@ -1302,7 +1302,7 @@
         if (!targetListEl) return;
         while (targetListEl.firstChild) targetListEl.removeChild(targetListEl.firstChild);
         if (!targetSites.length) {
-            targetListEl.appendChild(el('div', { className: 'empty' }, 'No target sites yet. Add a host to block redirects to it.'));
+            targetListEl.appendChild(el('div', { className: 'empty' }, 'None yet. Add a host you do not want to be sent to.'));
             return;
         }
         targetSites.forEach((site) => {
@@ -1329,7 +1329,7 @@
         if (!mapListEl) return;
         while (mapListEl.firstChild) mapListEl.removeChild(mapListEl.firstChild);
         if (!urlMaps.length) {
-            mapListEl.appendChild(el('div', { className: 'empty' }, 'No rewrite rules yet. Listed target sites and other off-site navigations are still blocked.'));
+            mapListEl.appendChild(el('div', { className: 'empty' }, 'No rewrite rules yet. Blocked destinations and other off-site navigations are still blocked.'));
             return;
         }
         urlMaps.forEach((map, index) => {

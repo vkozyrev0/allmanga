@@ -26,8 +26,8 @@ Known ad-script hosts live in the `blockedDomains` array (used to strip injected
 | Blocks this session | Small dark count on the disc (hidden while the count is 0) |
 
 - **Left-click** the disc to open the settings modal. Hover does not open it.
-- **Source sites** — on a site that is not listed, use **Add this site** (or check the current-host row). You can also paste any other hostname/URL. Uncheck a listed site to pause it; remove it to drop it from the family list. Settings are stored per origin (`localStorage`), so add the current host on each new site you want protected.
-- **Target sites** — destinations you do not want to be sent to (`youtu-chan.com` and `isekai2nd.com` by default). Add any hijack host here to block it and strip its scripts.
+- **Protected sites** — on a site that is not listed, use **Add this site** (or check the current-host row). You can also paste any other hostname/URL. Uncheck a listed site to pause it; remove it to drop it. Settings are stored per origin (`localStorage`), so add the current host on each new site you want protected.
+- **Blocked destinations** — hosts you do not want to be sent to (`youtu-chan.com` and `isekai2nd.com` by default). Add any hijack host here to block it and strip its scripts.
 - **Rewrite rules** — optional. When a navigation matches the from-URL, rewrite it onto the to-URL instead of blocking.
 - **Drag** the disc to move it. The spot is saved as an offset from the nearest viewport corner, so it stays put when the window is resized.
 - Right-click is not used. Escape, the close button, a click on the dimmed backdrop, or a second click on the disc closes the modal.
@@ -89,7 +89,7 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.25 |
+| Version | 1.26 |
 | Match | all `http://` and `https://` pages (`@noframes`) |
 | Run at | `document-start` |
 | Inject | page (`@inject-into page`, `@grant unsafeWindow`) |
