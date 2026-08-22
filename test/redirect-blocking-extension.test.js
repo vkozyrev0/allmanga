@@ -332,6 +332,17 @@ test('does not cancel a target=_blank off-site social link', () => {
   assert.match(a.href, /discord\.gg/);
 });
 
+test('cancels a target=_blank link to a listed target site', () => {
+  const { window } = load({ url: MKISSA_CHAPTER });
+  const a = window.document.createElement('a');
+  a.href = 'https://youtu-chan.com/ad';
+  a.target = '_blank';
+  window.document.body.appendChild(a);
+  const ev = new window.MouseEvent('click', { bubbles: true, cancelable: true });
+  a.dispatchEvent(ev);
+  assert.strictEqual(ev.defaultPrevented, true);
+});
+
 test('on mkissa.to, leaves a legitimate same-site script in place', async () => {
   const { window } = load({ url: 'https://mkissa.to/' });
   const s = window.document.createElement('script');
@@ -570,8 +581,12 @@ test('a left-click without dragging opens the settings modal', () => {
   assert.ok(modalById(window, 'rb-modal-toggle'), 'current-site toggle should be in the modal');
   assert.match(modalById(window, 'rb-modal-status').textContent, /0 blocked this session/);
   assert.ok(modalById(window, 'rb-site-add-input'));
+  assert.ok(modalById(window, 'rb-target-add-input'));
   assert.ok(modalById(window, 'rb-map-source-input'));
   assert.ok(modalById(window, 'rb-map-target-input'));
+  const targets = [...modalById(window, 'rb-target-list').querySelectorAll('[data-rb-target]')]
+    .map((row) => row.getAttribute('data-rb-target'));
+  assert.deepStrictEqual(targets, ['youtu-chan.com', 'isekai2nd.com']);
   const hosts = [...modalById(window, 'rb-site-list').querySelectorAll('[data-rb-host]')]
     .map((row) => row.getAttribute('data-rb-host'));
   assert.deepStrictEqual(hosts, ['allmanga.to', 'mkissa.to', 'mkissa.net']);
@@ -889,6 +904,48 @@ test('checking the current-site toggle on an unlisted host adds it', () => {
   assert.strictEqual(badge.getAttribute('data-rb-listed'), '1');
   assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
   assert.strictEqual(openCalls.length, 0);
+});
+
+test('adds a target site from the modal and strips its scripts', async () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-target-add-input').value = 'https://www.evil-ads.example/go';
+  modalById(window, 'rb-target-add-btn').click();
+  const targets = [...modalById(window, 'rb-target-list').querySelectorAll('[data-rb-target]')]
+    .map((row) => row.getAttribute('data-rb-target'));
+  assert.ok(targets.includes('evil-ads.example'));
+  const s = window.document.createElement('script');
+  s.src = 'https://evil-ads.example/redirect.js';
+  window.document.documentElement.appendChild(s);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(s.isConnected, false);
+});
+
+test('rejects a duplicate target site', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-target-add-input').value = 'youtu-chan.com';
+  modalById(window, 'rb-target-add-btn').click();
+  assert.match(modalById(window, 'rb-modal-error').textContent, /already in the target list/i);
+});
+
+test('removing a target site stops stripping its scripts', async () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  const row = modalById(window, 'rb-target-list').querySelector('[data-rb-target="youtu-chan.com"]');
+  row.querySelector('button.remove').click();
+  assert.strictEqual(
+    modalById(window, 'rb-target-list').querySelector('[data-rb-target="youtu-chan.com"]'),
+    null
+  );
+  const s = window.document.createElement('script');
+  s.src = 'https://youtu-chan.com/redirect.js';
+  window.document.documentElement.appendChild(s);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.strictEqual(s.isConnected, true);
 });
 
 test('adding another URL from an unlisted site treats it as family once this site is enabled', () => {

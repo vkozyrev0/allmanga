@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.23
+// @version      1.24
 // @description  Prevents off-site redirects. The status badge appears on every site so you can add the current host (or any URL) from the settings modal.
 // @author       You
 // @match        http://*/*
@@ -47,6 +47,7 @@
     const ENABLED_KEY = 'rb-enabled';     // legacy global pause ('0'); migrated to hosts
     const DISABLED_HOSTS_KEY = 'rb-disabled-hosts'; // JSON list of hostnames where blocking is off
     const SITES_KEY = 'rb-source-sites'; // JSON [{ host, enabled }] sister/source hosts
+    const TARGETS_KEY = 'rb-target-sites'; // JSON [{ host, enabled }] destinations to block
     const MAPS_KEY = 'rb-url-maps';      // JSON [{ source, target, enabled }] rewrite rules
     const ICON_SIZE = 22;                 // badge width/height in px
     const ICON_MARGIN = 12;               // default gap from the viewport edge
@@ -55,9 +56,11 @@
     let modalEl = null;
     let modalStatus = null;
     let siteListEl = null;
+    let targetListEl = null;
     let mapListEl = null;
     let modalError = null;
     let siteInput = null;
+    let targetInput = null;
     let addCurrentBar = null;
     let mapSourceInput = null;
     let mapTargetInput = null;
@@ -70,6 +73,7 @@
     let totalBlocked = storageGet(TOTAL_KEY, 0, parseIntSafe); // persisted total
     let disabledHosts = loadDisabledHosts();
     let sourceSites = loadSourceSites();
+    let targetSites = loadTargetSites();
     let urlMaps = loadUrlMaps();
 
     // Small, defensive localStorage helpers (storage can throw in private mode)
@@ -123,6 +127,10 @@
         storageSet(MAPS_KEY, JSON.stringify(urlMaps));
     }
 
+    function persistTargets() {
+        storageSet(TARGETS_KEY, JSON.stringify(targetSites));
+    }
+
     function parseUrlOrHost(value) {
         const raw = String(value || '').trim();
         if (!raw) return null;
@@ -174,6 +182,30 @@
             sites.forEach((site) => {
                 if (hostMatches(key, site.host)) site.enabled = false;
             });
+        }
+        return sites;
+    }
+
+    function loadTargetSites() {
+        const parsed = storageGet(TARGETS_KEY, null, (raw) => {
+            const value = JSON.parse(raw);
+            return Array.isArray(value) ? value : undefined;
+        });
+        const sites = [];
+        const seen = new Set();
+        function add(host, enabled) {
+            const h = String(host || '').toLowerCase().replace(/^www\./, '');
+            if (!h || seen.has(h)) return;
+            seen.add(h);
+            sites.push({ host: h, enabled: enabled !== false });
+        }
+        if (parsed) {
+            parsed.forEach((entry) => {
+                if (typeof entry === 'string') add(entry, true);
+                else if (entry && entry.host) add(entry.host, entry.enabled);
+            });
+        } else {
+            blockedDomains.forEach((host) => add(host, true));
         }
         return sites;
     }
@@ -261,6 +293,39 @@
         syncBadgeVisual();
         refreshModal();
         return '';
+    }
+
+    function isBlockedTarget(hostname) {
+        const h = String(hostname || '').toLowerCase().replace(/^www\./, '');
+        if (!h) return false;
+        return targetSites.some((site) => site.enabled !== false && hostMatches(h, site.host));
+    }
+
+    function addTargetSite(value) {
+        const parsed = parseUrlOrHost(value);
+        if (!parsed) return 'Enter a hostname or URL to block (example: isekai2nd.com)';
+        if (targetSites.some((site) => site.host === parsed.hostname)) {
+            return parsed.hostname + ' is already in the target list';
+        }
+        targetSites.push({ host: parsed.hostname, enabled: true });
+        persistTargets();
+        refreshModal();
+        return '';
+    }
+
+    function removeTargetSite(host) {
+        targetSites = targetSites.filter((site) => site.host !== host);
+        persistTargets();
+        refreshModal();
+        return '';
+    }
+
+    function setTargetEnabled(host, on) {
+        const row = targetSites.find((site) => site.host === host);
+        if (!row) return;
+        row.enabled = !!on;
+        persistTargets();
+        refreshModal();
     }
 
     function addUrlMap(sourceValue, targetValue) {
@@ -485,8 +550,9 @@
         const newTab = event.type === 'auxclick' || event.button === 1
             || event.ctrlKey || event.metaKey || event.shiftKey
             || targetAttr === '_blank' || targetAttr === 'blank';
-        // Same-tab off-site is the next-page hijack. New-tab (Discord, etc.) stays.
-        if (newTab && decision.action === 'block') return;
+        // Same-tab off-site is the next-page hijack. New-tab (Discord, etc.) stays
+        // unless the destination is a listed target site.
+        if (newTab && decision.action === 'block' && !isBlockedTarget(hostnameOf(href))) return;
         event.preventDefault();
         event.stopPropagation();
         noteDecision(decision, 'click', href);
@@ -515,14 +581,17 @@
     function isBlockedScriptSrc(src) {
         if (!src) return false;
         const host = hostnameOf(src);
-        const mapped = urlMaps
+        const fromTargets = targetSites
+            .filter((site) => site.enabled !== false)
+            .map((site) => site.host);
+        const fromMaps = urlMaps
             .filter((map) => map.enabled !== false)
             .map((map) => {
                 const parsed = parseUrlOrHost(map.source);
                 return parsed ? parsed.hostname : '';
             })
             .filter(Boolean);
-        const hosts = blockedDomains.concat(mapped);
+        const hosts = fromTargets.concat(fromMaps);
         return hosts.some((domain) => host.includes(domain) || String(src).includes(domain));
     }
 
@@ -1051,23 +1120,52 @@
         siteForm.appendChild(siteAdd);
         sitesSection.appendChild(siteForm);
 
+        const targetsSection = el('section', { className: 'section' });
+        targetsSection.appendChild(el('h3', { className: 'label' }, 'Target sites'));
+        targetsSection.appendChild(el('p', { className: 'hint' }, 'Sites you do not want to be redirected to. Added hosts are blocked and their injected scripts are stripped. Uncheck to pause one; remove to drop it.'));
+        targetListEl = el('div', { id: 'rb-target-list' });
+        targetsSection.appendChild(targetListEl);
+        const targetForm = el('div', { className: 'form' });
+        targetInput = el('input', {
+            id: 'rb-target-add-input',
+            type: 'text',
+            placeholder: 'isekai2nd.com',
+            spellcheck: 'false',
+            autocomplete: 'off'
+        });
+        const targetAdd = el('button', { id: 'rb-target-add-btn', type: 'button' }, 'Add target');
+        targetAdd.addEventListener('click', () => {
+            const err = addTargetSite(targetInput.value);
+            if (err) showModalError(err);
+            else targetInput.value = '';
+        });
+        targetInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                targetAdd.click();
+            }
+        });
+        targetForm.appendChild(targetInput);
+        targetForm.appendChild(targetAdd);
+        targetsSection.appendChild(targetForm);
+
         const mapsSection = el('section', { className: 'section' });
-        mapsSection.appendChild(el('h3', { className: 'label' }, 'Source → target URLs'));
-        mapsSection.appendChild(el('p', { className: 'hint' }, 'When a navigation matches the source, rewrite it onto the target. Leave target blank to block instead.'));
+        mapsSection.appendChild(el('h3', { className: 'label' }, 'Rewrite rules'));
+        mapsSection.appendChild(el('p', { className: 'hint' }, 'Optional. When a navigation matches the from-URL, rewrite it onto the to-URL instead of blocking. Leave the to-URL blank to block.'));
         mapListEl = el('div', { id: 'rb-map-list' });
         mapsSection.appendChild(mapListEl);
         const mapForm = el('div', { className: 'form' });
         mapSourceInput = el('input', {
             id: 'rb-map-source-input',
             type: 'text',
-            placeholder: 'Source URL',
+            placeholder: 'From URL',
             spellcheck: 'false',
             autocomplete: 'off'
         });
         mapTargetInput = el('input', {
             id: 'rb-map-target-input',
             type: 'text',
-            placeholder: 'Target URL (optional)',
+            placeholder: 'To URL (optional)',
             spellcheck: 'false',
             autocomplete: 'off'
         });
@@ -1102,6 +1200,7 @@
         dialog.appendChild(head);
         dialog.appendChild(modalStatus);
         dialog.appendChild(sitesSection);
+        dialog.appendChild(targetsSection);
         dialog.appendChild(mapsSection);
         dialog.appendChild(modalError);
         overlay.appendChild(dialog);
@@ -1199,11 +1298,38 @@
         });
     }
 
+    function refreshTargetList() {
+        if (!targetListEl) return;
+        while (targetListEl.firstChild) targetListEl.removeChild(targetListEl.firstChild);
+        if (!targetSites.length) {
+            targetListEl.appendChild(el('div', { className: 'empty' }, 'No target sites yet. Add a host to block redirects to it.'));
+            return;
+        }
+        targetSites.forEach((site) => {
+            const row = el('div', { className: 'row' });
+            row.setAttribute('data-rb-target', site.host);
+            const toggle = el('input', {
+                type: 'checkbox',
+                className: 'toggle',
+                'aria-label': (site.enabled !== false ? 'Disable ' : 'Enable ') + site.host
+            });
+            toggle.checked = site.enabled !== false;
+            toggle.addEventListener('change', () => setTargetEnabled(site.host, toggle.checked));
+            const name = el('div', { className: 'name' }, site.host);
+            const remove = el('button', { className: 'remove', type: 'button' }, 'Remove');
+            remove.addEventListener('click', () => removeTargetSite(site.host));
+            row.appendChild(toggle);
+            row.appendChild(name);
+            row.appendChild(remove);
+            targetListEl.appendChild(row);
+        });
+    }
+
     function refreshMapList() {
         if (!mapListEl) return;
         while (mapListEl.firstChild) mapListEl.removeChild(mapListEl.firstChild);
         if (!urlMaps.length) {
-            mapListEl.appendChild(el('div', { className: 'empty' }, 'No mappings yet. Off-site navigations are still blocked.'));
+            mapListEl.appendChild(el('div', { className: 'empty' }, 'No rewrite rules yet. Listed target sites and other off-site navigations are still blocked.'));
             return;
         }
         urlMaps.forEach((map, index) => {
@@ -1234,6 +1360,7 @@
         showModalError('');
         refreshModalStatus();
         refreshSiteList();
+        refreshTargetList();
         refreshMapList();
     }
 
