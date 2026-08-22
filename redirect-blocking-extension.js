@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
+// @name         Redirect Blocker
 // @namespace    http://tampermonkey.net/
-// @version      1.24
+// @version      1.25
 // @description  Prevents off-site redirects. The status badge appears on every site so you can add the current host (or any URL) from the settings modal.
 // @author       You
 // @match        http://*/*

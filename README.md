@@ -89,7 +89,7 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.24 |
+| Version | 1.25 |
 | Match | all `http://` and `https://` pages (`@noframes`) |
 | Run at | `document-start` |
 | Inject | page (`@inject-into page`, `@grant unsafeWindow`) |

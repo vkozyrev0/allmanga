@@ -1,6 +1,6 @@
 # Findings and method
 
-How next-page ads on allmanga / mkissa actually navigate away, and why the userscript is built the way it is. Current script version: **1.24**.
+How next-page ads on allmanga / mkissa actually navigate away, and why the userscript is built the way it is. Current script version: **1.25**.
 
 ## The problem
 
