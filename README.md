@@ -35,9 +35,9 @@ Known ad-script hosts live in the `blockedDomains` array (used to strip injected
 ## Installation (AdGuard)
 
 1. Install the userscript from  
-   https://raw.githubusercontent.com/vkozyrev0/allmanga/refs/heads/main/redirect-blocking-extension.js  
+   https://cdn.jsdelivr.net/gh/vkozyrev0/allmanga@main/redirect-blocking-extension.js  
    Tampermonkey / Windows can also use  
-   https://raw.githubusercontent.com/vkozyrev0/allmanga/refs/heads/main/redirect-blocking-extension.user.js
+   https://cdn.jsdelivr.net/gh/vkozyrev0/allmanga@main/redirect-blocking-extension.user.js
 2. After an update, reload the page with **Ctrl+Shift+R** (cache-bypass). **Ctrl+F5** often keeps a cached document, so the badge does not appear.
 
 Optional network-level blocks for the same ad hosts live in [`adguard-user-rules.txt`](adguard-user-rules.txt). The userscript is the main install path.
@@ -89,7 +89,7 @@ The tests in [`test/`](test/) cover link rewriting, pop-up blocking, injected-sc
 
 | Field | Value |
 |-------|-------|
-| Version | 1.26 |
+| Version | 1.27 |
 | Match | all `http://` and `https://` pages (`@noframes`) |
 | Run at | `document-start` |
 | Inject | page (`@inject-into page`, `@grant unsafeWindow`) |
