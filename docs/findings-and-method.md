@@ -1,6 +1,6 @@
 # Findings and method
 
-How next-page ads on allmanga / mkissa actually navigate away, and why the userscript is built the way it is. Current script version: **1.20**.
+How next-page ads on allmanga / mkissa actually navigate away, and why the userscript is built the way it is. Current script version: **1.22**.
 
 ## The problem
 
@@ -72,9 +72,10 @@ The badge is how you know the script is alive and how you pause it on the curren
 
 - **On:** orange disc, unbroken chain.
 - **Off:** gray disc, broken chain with a slash (the old “tiny ticks” glyph looked the same at 22px; only the color changed).
-- Hover or left-click opens the menu. Right-click is not used: the browser context menu always stacked on top of ours, even when we `preventDefault`.
+- The script matches every `http(s)` page (`@noframes`). The badge is shown even when the current host is not a source site; blocking stays off until that host is added and enabled.
+- Left-click opens a settings modal (source sites + source/target URL mappings). Hover does not. Right-click is not used: the browser context menu always stacked on top of a custom menu, even when we `preventDefault`.
 - Drag remembers an offset from the nearest viewport corner (`rb-icon-pos`), so a resize does not dump the disc in the middle of the reader chrome.
-- Per-host pause lives in `rb-disabled-hosts`. A lifetime counter lives in `rb-blocked-total`.
+- Per-host pause lives in `rb-disabled-hosts` (kept in sync with `rb-source-sites`). Rewrite rules live in `rb-url-maps`. A lifetime counter lives in `rb-blocked-total`.
 
 The badge is appended to `<html>` (not `<body>`), re-homed into `document.fullscreenElement` on `fullscreenchange`, and re-attached by a `MutationObserver` if the SPA deletes it. SvelteKit hydrate on mkissa chapter pages replaces `body`; a body-mounted node vanishes. A `popover` attribute is never used: UA CSS is `display:none !important` until `showPopover()`, and AdGuard’s page world often has no Popover API. The icon is built with DOM APIs (no `innerHTML`) so Trusted Types / CSP cannot strip it. After a script update, **Ctrl+Shift+R** is required; Ctrl+F5 often keeps a cached document and the badge never appears.
 
@@ -106,7 +107,7 @@ On a mkissa chapter page, with the disc orange:
 1. Next-chapter control that would have gone to `isekai2nd.com` stays on the chapter. Console: `Blocked …`.
 2. A same-site next-chapter URL still navigates.
 3. A `target=_blank` Discord link still opens.
-4. Hover the disc → **Disable on mkissa.to**. Disc turns gray with a slash. The same hijack now leaves the tab.
+4. Click the disc → uncheck **mkissa.to**. Disc turns gray with a slash. The same hijack now leaves the tab.
 5. Enable again. Disc returns to orange + unbroken chain.
 
 Automated coverage is in [`test/redirect-blocking-extension.test.js`](../test/redirect-blocking-extension.test.js) (`npm test`). It loads the unmodified script into jsdom on both hosts.

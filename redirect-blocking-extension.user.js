@@ -1,15 +1,12 @@
 // ==UserScript==
 // @name         Advanced Redirect Blocker for allmanga.to and mkissa.to
 // @namespace    http://tampermonkey.net/
-// @version      1.20
-// @description  Prevents off-site redirects on allmanga.to and mkissa.to (next-page hijacks, location.assign/href, pop-ups). Shows a draggable status badge with a blocked-redirect counter.
+// @version      1.22
+// @description  Prevents off-site redirects. The status badge appears on every site so you can add the current host (or any URL) from the settings modal.
 // @author       You
-// @match        *://allmanga.to/*
-// @match        *://*.allmanga.to/*
-// @match        *://mkissa.to/*
-// @match        *://*.mkissa.to/*
-// @match        *://mkissa.net/*
-// @match        *://*.mkissa.net/*
+// @match        http://*/*
+// @match        https://*/*
+// @noframes
 // @run-at       document-start
 // @inject-into  page
 // @downloadURL  https://raw.githubusercontent.com/vkozyrev0/allmanga/main/redirect-blocking-extension.user.js
@@ -49,24 +46,31 @@
     const TOTAL_KEY = 'rb-blocked-total'; // cumulative blocks across page loads
     const ENABLED_KEY = 'rb-enabled';     // legacy global pause ('0'); migrated to hosts
     const DISABLED_HOSTS_KEY = 'rb-disabled-hosts'; // JSON list of hostnames where blocking is off
+    const SITES_KEY = 'rb-source-sites'; // JSON [{ host, enabled }] sister/source hosts
+    const MAPS_KEY = 'rb-url-maps';      // JSON [{ source, target, enabled }] rewrite rules
     const ICON_SIZE = 22;                 // badge width/height in px
     const ICON_MARGIN = 12;               // default gap from the viewport edge
 
     let badgeEl = null;
-    let menuEl = null;
-    let statusItem = null;
-    let toggleItem = null;
+    let modalEl = null;
+    let modalStatus = null;
+    let siteListEl = null;
+    let mapListEl = null;
+    let modalError = null;
+    let siteInput = null;
+    let addCurrentBar = null;
+    let mapSourceInput = null;
+    let mapTargetInput = null;
     let glyphGroup = null;
     let discEl = null;
     let countEl = null;
-    let menuOpen = false;
-    let pointerOnBadge = false;
-    let pointerOnMenu = false;
-    let hideTimer = null;
+    let modalOpen = false;
     let dragging = false;
     let sessionBlocked = 0;               // blocks during this page load
     let totalBlocked = storageGet(TOTAL_KEY, 0, parseIntSafe); // persisted total
     let disabledHosts = loadDisabledHosts();
+    let sourceSites = loadSourceSites();
+    let urlMaps = loadUrlMaps();
 
     // Small, defensive localStorage helpers (storage can throw in private mode)
     function storageGet(key, fallback, parse) {
@@ -107,16 +111,190 @@
         return set;
     }
 
+    function persistDisabledHosts() {
+        storageSet(DISABLED_HOSTS_KEY, JSON.stringify(Array.from(disabledHosts)));
+    }
+
+    function persistSites() {
+        storageSet(SITES_KEY, JSON.stringify(sourceSites));
+    }
+
+    function persistMaps() {
+        storageSet(MAPS_KEY, JSON.stringify(urlMaps));
+    }
+
+    function parseUrlOrHost(value) {
+        const raw = String(value || '').trim();
+        if (!raw) return null;
+        try {
+            const url = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : 'https://' + raw);
+            const hostname = url.hostname.toLowerCase().replace(/^www\./, '');
+            if (!hostname) return null;
+            if (hostname !== 'localhost' && hostname.indexOf('.') === -1) return null;
+            const pathname = url.pathname || '/';
+            return {
+                hostname: hostname,
+                pathname: pathname,
+                search: url.search,
+                hash: url.hash,
+                href: url.href,
+                hasPath: pathname !== '/'
+            };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function loadSourceSites() {
+        const defaults = allowedHostSuffixes.map((host) => ({ host: host, enabled: true }));
+        const parsed = storageGet(SITES_KEY, null, (raw) => {
+            const value = JSON.parse(raw);
+            return Array.isArray(value) ? value : undefined;
+        });
+        const sites = [];
+        const seen = new Set();
+        function add(host, enabled) {
+            const h = String(host || '').toLowerCase().replace(/^www\./, '');
+            if (!h || seen.has(h)) return;
+            seen.add(h);
+            sites.push({ host: h, enabled: enabled !== false });
+        }
+        if (parsed) {
+            parsed.forEach((entry) => {
+                if (typeof entry === 'string') add(entry, true);
+                else if (entry && entry.host) add(entry.host, entry.enabled);
+            });
+        } else {
+            defaults.forEach((entry) => add(entry.host, entry.enabled));
+        }
+        const key = siteKey();
+        // Do not auto-add the current host: the badge is shown everywhere so
+        // the user can opt the site in from the modal.
+        if (key && disabledHosts.has(key)) {
+            sites.forEach((site) => {
+                if (hostMatches(key, site.host)) site.enabled = false;
+            });
+        }
+        return sites;
+    }
+
+    function loadUrlMaps() {
+        const parsed = storageGet(MAPS_KEY, [], (raw) => {
+            const value = JSON.parse(raw);
+            return Array.isArray(value) ? value : undefined;
+        });
+        return parsed.map((entry) => ({
+            source: String(entry && entry.source || '').trim(),
+            target: String(entry && entry.target || '').trim(),
+            enabled: !entry || entry.enabled !== false
+        })).filter((entry) => entry.source);
+    }
+
+    function hostMatches(hostname, suffix) {
+        const h = String(hostname || '').toLowerCase().replace(/^www\./, '');
+        const s = String(suffix || '').toLowerCase().replace(/^www\./, '');
+        if (!h || !s) return false;
+        return h === s || h.endsWith('.' + s);
+    }
+
+    function currentSiteEntry() {
+        const key = siteKey();
+        return sourceSites.find((site) => hostMatches(key, site.host)) || null;
+    }
+
     function isSiteEnabled() {
-        return !disabledHosts.has(siteKey());
+        const entry = currentSiteEntry();
+        return !!(entry && entry.enabled !== false);
+    }
+
+    function isCurrentListed() {
+        return !!currentSiteEntry();
+    }
+
+    function setHostEnabled(host, on) {
+        const parsed = parseUrlOrHost(host);
+        const h = parsed ? parsed.hostname : String(host || '').toLowerCase().replace(/^www\./, '');
+        if (!h) return;
+        let row = sourceSites.find((site) => site.host === h);
+        if (!row) {
+            row = { host: h, enabled: !!on };
+            sourceSites.push(row);
+        } else {
+            row.enabled = !!on;
+        }
+        const key = siteKey();
+        if (hostMatches(key, h)) {
+            if (on) disabledHosts.delete(key);
+            else disabledHosts.add(key);
+            persistDisabledHosts();
+        }
+        persistSites();
+        syncBadgeVisual();
+        if (modalOpen) refreshModal();
     }
 
     function setSiteEnabled(on) {
+        setHostEnabled(siteKey(), on);
+    }
+
+    function addSourceSite(value) {
+        const parsed = parseUrlOrHost(value);
+        if (!parsed) return 'Enter a hostname or URL (example: mkissa.to)';
+        if (sourceSites.some((site) => site.host === parsed.hostname)) {
+            return parsed.hostname + ' is already in the list';
+        }
+        sourceSites.push({ host: parsed.hostname, enabled: true });
         const key = siteKey();
-        if (on) disabledHosts.delete(key);
-        else disabledHosts.add(key);
-        storageSet(DISABLED_HOSTS_KEY, JSON.stringify(Array.from(disabledHosts)));
+        if (hostMatches(key, parsed.hostname)) {
+            disabledHosts.delete(key);
+            persistDisabledHosts();
+        }
+        persistSites();
         syncBadgeVisual();
+        refreshModal();
+        return '';
+    }
+
+    function removeSourceSite(host) {
+        sourceSites = sourceSites.filter((site) => site.host !== host);
+        persistSites();
+        syncBadgeVisual();
+        refreshModal();
+        return '';
+    }
+
+    function addUrlMap(sourceValue, targetValue) {
+        const source = parseUrlOrHost(sourceValue);
+        if (!source) return 'Enter a source hostname or URL';
+        const targetRaw = String(targetValue || '').trim();
+        let targetHost = '';
+        if (targetRaw) {
+            const target = parseUrlOrHost(targetRaw);
+            if (!target) return 'Enter a valid target hostname or URL, or leave it blank to block';
+            targetHost = target.hasPath ? target.href : target.hostname;
+        }
+        const sourceKey = source.hasPath ? source.href : source.hostname;
+        if (urlMaps.some((map) => map.source === sourceKey)) {
+            return sourceKey + ' already has a mapping';
+        }
+        urlMaps.push({ source: sourceKey, target: targetHost, enabled: true });
+        persistMaps();
+        refreshModal();
+        return '';
+    }
+
+    function removeUrlMap(index) {
+        if (index < 0 || index >= urlMaps.length) return;
+        urlMaps.splice(index, 1);
+        persistMaps();
+        refreshModal();
+    }
+
+    function setMapEnabled(index, on) {
+        if (!urlMaps[index]) return;
+        urlMaps[index].enabled = !!on;
+        persistMaps();
+        refreshModal();
     }
 
     // Count a blocked redirect and refresh the badge tooltip
@@ -130,13 +308,18 @@
     function updateBadgeTooltip() {
         if (!badgeEl) return;
         const host = siteKey();
-        const label = isSiteEnabled()
-            ? `Redirect Blocker active on ${host} — ${sessionBlocked} blocked this session (${totalBlocked} total)`
-            : `Redirect Blocker disabled on ${host} — hover or click to enable`;
-        // No title attribute: the native tooltip would cover the hover menu.
+        let label;
+        if (isSiteEnabled()) {
+            label = `Redirect Blocker active on ${host} — ${sessionBlocked} blocked this session (${totalBlocked} total)`;
+        } else if (!isCurrentListed()) {
+            label = `Redirect Blocker idle on ${host} — click to add this site`;
+        } else {
+            label = `Redirect Blocker disabled on ${host} — click to open settings`;
+        }
         badgeEl.removeAttribute('title');
         badgeEl.setAttribute('aria-label', label);
         badgeEl.setAttribute('data-rb-enabled', isSiteEnabled() ? '1' : '0');
+        badgeEl.setAttribute('data-rb-listed', isCurrentListed() ? '1' : '0');
         badgeEl.setAttribute('data-rb-site', host);
     }
 
@@ -190,7 +373,7 @@
         badgeEl.style.setProperty('display', 'block', 'important');
         updateBadgeTooltip();
         updateCountBadge();
-        if (menuOpen) updateMenuLabels();
+        if (modalOpen) refreshModalStatus();
     }
 
     function hostnameOf(url) {
@@ -207,7 +390,21 @@
         const orig = originalHostname.toLowerCase();
         if (h === orig || h === 'www.' + orig || orig === 'www.' + h) return true;
         if (h.endsWith('.' + orig) || orig.endsWith('.' + h)) return true;
-        return allowedHostSuffixes.some((s) => h === s || h === 'www.' + s || h.endsWith('.' + s));
+        return sourceSites.some((site) => site.enabled !== false && hostMatches(h, site.host));
+    }
+
+    function mappingFor(urlObj) {
+        const destHost = urlObj.hostname.toLowerCase().replace(/^www\./, '');
+        for (let i = 0; i < urlMaps.length; i++) {
+            const map = urlMaps[i];
+            if (map.enabled === false) continue;
+            const src = parseUrlOrHost(map.source);
+            if (!src) continue;
+            if (!hostMatches(destHost, src.hostname)) continue;
+            if (src.hasPath && urlObj.pathname.toLowerCase().indexOf(src.pathname.toLowerCase()) !== 0) continue;
+            return map;
+        }
+        return null;
     }
 
     // Paths that still look like this site if they were copied onto an ad host
@@ -230,6 +427,14 @@
         if (!url) return { action: 'allow', url: url };
         try {
             const urlObj = new URL(String(url), W.location.origin);
+            const map = mappingFor(urlObj);
+            if (map) {
+                const target = parseUrlOrHost(map.target);
+                if (!target) return { action: 'block', url: url };
+                if (target.hasPath) return { action: 'rewrite', url: target.href };
+                const rewritten = `https://${target.hostname}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
+                return { action: 'rewrite', url: rewritten };
+            }
             if (isAllowedHost(urlObj.hostname)) return { action: 'allow', url: url };
             if (looksLikeSitePath(urlObj.pathname)) {
                 const rewritten = `https://${originalHostname}${urlObj.pathname}${urlObj.search}${urlObj.hash}`;
@@ -310,7 +515,15 @@
     function isBlockedScriptSrc(src) {
         if (!src) return false;
         const host = hostnameOf(src);
-        return blockedDomains.some((domain) => host.includes(domain) || String(src).includes(domain));
+        const mapped = urlMaps
+            .filter((map) => map.enabled !== false)
+            .map((map) => {
+                const parsed = parseUrlOrHost(map.source);
+                return parsed ? parsed.hostname : '';
+            })
+            .filter(Boolean);
+        const hosts = blockedDomains.concat(mapped);
+        return hosts.some((domain) => host.includes(domain) || String(src).includes(domain));
     }
 
     function sanitizeMetaRefresh(node) {
@@ -539,29 +752,12 @@
         storageSet(POS_KEY, JSON.stringify({ corner, dx, dy }));
     }
 
-    // Drag, hover-menu, and left-click. A small move threshold keeps a
-    // plain click from being treated as a drag.
+    // Drag and left-click. A small move threshold keeps a plain click
+    // from being treated as a drag. Click opens the settings modal.
     function enableBadgeUi() {
         let moved = false;
         let startMouseX = 0, startMouseY = 0;
         let startLeft = 0, startTop = 0;
-
-        badgeEl.addEventListener('mouseenter', () => {
-            pointerOnBadge = true;
-            showMenu();
-        });
-        badgeEl.addEventListener('mouseleave', () => {
-            pointerOnBadge = false;
-            scheduleHideMenu();
-        });
-        menuEl.addEventListener('mouseenter', () => {
-            pointerOnMenu = true;
-            cancelHideTimer();
-        });
-        menuEl.addEventListener('mouseleave', () => {
-            pointerOnMenu = false;
-            scheduleHideMenu();
-        });
 
         badgeEl.addEventListener('mousedown', (event) => {
             if (event.button !== 0) return;
@@ -581,7 +777,7 @@
             const dy = event.clientY - startMouseY;
             if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
                 moved = true;
-                hideMenu();
+                hideModal();
             }
             applyPosition(startLeft + dx, startTop + dy);
         });
@@ -592,33 +788,25 @@
             badgeEl.style.cursor = 'grab';
             if (moved) {
                 savePosition(parseFloat(badgeEl.style.left) || 0, parseFloat(badgeEl.style.top) || 0);
+            } else if (modalOpen) {
+                hideModal();
             } else {
-                showMenu();
+                showModal();
             }
         });
 
-        // Browser context menu would cover ours; do not use right-click.
         badgeEl.addEventListener('contextmenu', (event) => {
             event.preventDefault();
             event.stopPropagation();
         }, true);
 
-        W.addEventListener('mousedown', (event) => {
-            if (!menuOpen) return;
-            if (eventOnBadge(event) || eventOnMenu(event)) return;
-            pointerOnBadge = false;
-            pointerOnMenu = false;
-            hideMenu();
-        }, true);
         W.addEventListener('keydown', (event) => {
-            if (event.key === 'Escape') hideMenu();
+            if (event.key === 'Escape') hideModal();
         });
         W.addEventListener('resize', () => {
-            hideMenu();
             const pos = resolvePosition();
             applyPosition(pos.left, pos.top);
         });
-        D.addEventListener('scroll', hideMenu, true);
     }
 
     // Glyph on a disc — built with DOM APIs so Trusted Types / innerHTML CSP
@@ -710,16 +898,29 @@
         return badge;
     }
 
-    // Host pages often style `button` / `div` globally. Shadow + a local
-    // stylesheet keeps the menu readable.
-    function createMenuElement() {
+    function el(tag, attrs, text) {
+        const node = D.createElement(tag);
+        if (attrs) {
+            Object.keys(attrs).forEach((key) => {
+                if (key === 'className') node.className = attrs[key];
+                else node.setAttribute(key, attrs[key]);
+            });
+        }
+        if (text != null) node.textContent = text;
+        return node;
+    }
+
+    // Host pages often style `button` / `input` globally. Shadow + a local
+    // stylesheet keeps the settings modal readable.
+    function createModalElement() {
         const host = D.createElement('div');
-        host.id = 'rb-icon-menu';
-        host.setAttribute('role', 'menu');
+        host.id = 'rb-icon-modal';
+        host.setAttribute('aria-hidden', 'true');
         [
             ['display', 'none'],
             ['position', 'fixed'],
-            ['z-index', '2147483647'],
+            ['inset', '0'],
+            ['z-index', '2147483646'],
             ['margin', '0'],
             ['padding', '0'],
             ['border', 'none'],
@@ -734,114 +935,326 @@
 
         const style = D.createElement('style');
         style.textContent = [
-            '.menu{display:block;min-width:200px;padding:4px;background:#1a1b1e;color:#f8f9fa;',
-            'border:1px solid #373a40;border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45);',
-            'font:13px/1.3 system-ui,sans-serif;user-select:none}',
-            '.status{display:block;margin:0;padding:6px 12px 4px;color:#adb5bd;',
-            'font:12px/1.3 system-ui,sans-serif}',
-            '.item{display:block;width:100%;box-sizing:border-box;margin:0;padding:8px 12px;',
-            'border:0;background:transparent;color:#f8f9fa;font:13px/1.3 system-ui,sans-serif;',
-            'text-align:left;cursor:pointer;border-radius:4px}',
-            '.item:hover{background:#f76707}'
+            '.overlay{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;',
+            'align-items:center;justify-content:center;padding:16px;box-sizing:border-box}',
+            '.dialog{width:min(440px,100%);max-height:min(80vh,640px);overflow:auto;',
+            'background:#1a1b1e;color:#f8f9fa;border:1px solid #373a40;border-radius:10px;',
+            'box-shadow:0 16px 48px rgba(0,0,0,.55);font:13px/1.4 system-ui,sans-serif}',
+            '.head{display:flex;align-items:center;justify-content:space-between;',
+            'gap:12px;padding:14px 16px 8px}',
+            '.title{margin:0;font:600 15px/1.3 system-ui,sans-serif}',
+            '.close{width:28px;height:28px;border:0;border-radius:6px;background:transparent;',
+            'color:#f8f9fa;font:18px/28px system-ui,sans-serif;cursor:pointer}',
+            '.close:hover{background:#373a40}',
+            '.status{margin:0;padding:0 16px 12px;color:#adb5bd;font:12px/1.3 system-ui,sans-serif}',
+            '.section{padding:8px 16px 12px;border-top:1px solid #2c2e33}',
+            '.label{margin:0 0 8px;font:600 12px/1.3 system-ui,sans-serif;color:#ced4da;',
+            'text-transform:uppercase;letter-spacing:.04em}',
+            '.hint{margin:0 0 8px;color:#868e96;font:12px/1.3 system-ui,sans-serif}',
+            '.row{display:flex;align-items:center;gap:8px;padding:6px 0}',
+            '.row + .row{border-top:1px solid #2c2e33}',
+            '.name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+            '.this{color:#868e96;font-size:11px;margin-left:6px}',
+            '.arrow{color:#868e96;flex:0 0 auto}',
+            '.toggle{flex:0 0 auto;margin:0}',
+            '.remove{flex:0 0 auto;border:0;border-radius:4px;background:transparent;',
+            'color:#ffa8a8;font:12px/1 system-ui,sans-serif;cursor:pointer;padding:4px 6px}',
+            '.remove:hover{background:#7d1a1a;color:#fff}',
+            '.remove:disabled{opacity:.35;cursor:default}',
+            '.row .add{color:#fff;background:#f76707}',
+            '.row .add:hover{background:#e8590c;color:#fff}',
+            '.form{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}',
+            '.form input{flex:1 1 120px;min-width:0;box-sizing:border-box;height:30px;',
+            'padding:0 8px;border:1px solid #495057;border-radius:6px;background:#101113;',
+            'color:#f8f9fa;font:13px/30px system-ui,sans-serif}',
+            '.form input:focus{outline:1px solid #f76707;border-color:#f76707}',
+            '.form button,.empty{font:13px/1 system-ui,sans-serif}',
+            '.form button{flex:0 0 auto;height:30px;padding:0 10px;border:0;border-radius:6px;',
+            'background:#f76707;color:#fff;cursor:pointer}',
+            '.form button:hover{background:#e8590c}',
+            '.empty{color:#868e96;padding:4px 0}',
+            '.add-current{display:none;align-items:center;gap:8px;margin:0 0 10px;padding:8px 10px;',
+            'background:#101113;border:1px solid #f76707;border-radius:8px}',
+            '.add-current.show{display:flex}',
+            '.add-current .copy{flex:1;min-width:0}',
+            '.add-current .copy strong{display:block;font:600 13px/1.3 system-ui,sans-serif}',
+            '.add-current .copy span{display:block;color:#adb5bd;font:12px/1.3 system-ui,sans-serif}',
+            '.add-current button{flex:0 0 auto;height:30px;padding:0 10px;border:0;border-radius:6px;',
+            'background:#f76707;color:#fff;cursor:pointer;font:13px/1 system-ui,sans-serif}',
+            '.add-current button:hover{background:#e8590c}',
+            '.error{min-height:16px;margin:6px 16px 0;color:#ffa8a8;font:12px/1.3 system-ui,sans-serif}'
         ].join('');
 
-        const box = D.createElement('div');
-        box.className = 'menu';
-
-        statusItem = D.createElement('div');
-        statusItem.id = 'rb-menu-status';
-        statusItem.className = 'status';
-
-        toggleItem = D.createElement('div');
-        toggleItem.id = 'rb-menu-toggle';
-        toggleItem.className = 'item';
-        toggleItem.setAttribute('role', 'menuitem');
-        toggleItem.addEventListener('click', (event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            setSiteEnabled(!isSiteEnabled());
-            hideMenu();
+        const overlay = el('div', { className: 'overlay' });
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) hideModal();
         });
 
-        box.appendChild(statusItem);
-        box.appendChild(toggleItem);
+        const dialog = el('div', {
+            className: 'dialog',
+            role: 'dialog',
+            'aria-modal': 'true',
+            'aria-labelledby': 'rb-modal-title'
+        });
+        dialog.addEventListener('click', (event) => event.stopPropagation());
+        dialog.addEventListener('mousedown', (event) => event.stopPropagation());
+
+        const head = el('div', { className: 'head' });
+        head.appendChild(el('h2', { className: 'title', id: 'rb-modal-title' }, 'Redirect Blocker'));
+        const closeBtn = el('button', { className: 'close', id: 'rb-modal-close', type: 'button', 'aria-label': 'Close' }, '×');
+        closeBtn.addEventListener('click', (event) => {
+            event.preventDefault();
+            hideModal();
+        });
+        head.appendChild(closeBtn);
+
+        modalStatus = el('p', { className: 'status', id: 'rb-modal-status' });
+
+        const sitesSection = el('section', { className: 'section' });
+        sitesSection.appendChild(el('h3', { className: 'label' }, 'Source sites'));
+        sitesSection.appendChild(el('p', { className: 'hint' }, 'The badge appears on every site. Add this site (or any URL) to turn blocking on here. Uncheck a listed site to pause it; remove it to drop it from the family list.'));
+        addCurrentBar = el('div', { className: 'add-current', id: 'rb-add-current' });
+        const addCurrentCopy = el('div', { className: 'copy' });
+        addCurrentCopy.appendChild(el('strong', { id: 'rb-add-current-host' }, ''));
+        addCurrentCopy.appendChild(el('span', null, 'Not in the source list — blocking is off here.'));
+        const addCurrentBtn = el('button', { id: 'rb-add-current-btn', type: 'button' }, 'Add this site');
+        addCurrentBtn.addEventListener('click', () => {
+            const err = addSourceSite(siteKey());
+            if (err) showModalError(err);
+        });
+        addCurrentBar.appendChild(addCurrentCopy);
+        addCurrentBar.appendChild(addCurrentBtn);
+        sitesSection.appendChild(addCurrentBar);
+        siteListEl = el('div', { id: 'rb-site-list' });
+        sitesSection.appendChild(siteListEl);
+        const siteForm = el('div', { className: 'form' });
+        siteInput = el('input', {
+            id: 'rb-site-add-input',
+            type: 'text',
+            placeholder: 'example.com',
+            spellcheck: 'false',
+            autocomplete: 'off'
+        });
+        const siteAdd = el('button', { id: 'rb-site-add-btn', type: 'button' }, 'Add site');
+        siteAdd.addEventListener('click', () => {
+            const err = addSourceSite(siteInput.value);
+            if (err) showModalError(err);
+            else siteInput.value = '';
+        });
+        siteInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                siteAdd.click();
+            }
+        });
+        siteForm.appendChild(siteInput);
+        siteForm.appendChild(siteAdd);
+        sitesSection.appendChild(siteForm);
+
+        const mapsSection = el('section', { className: 'section' });
+        mapsSection.appendChild(el('h3', { className: 'label' }, 'Source → target URLs'));
+        mapsSection.appendChild(el('p', { className: 'hint' }, 'When a navigation matches the source, rewrite it onto the target. Leave target blank to block instead.'));
+        mapListEl = el('div', { id: 'rb-map-list' });
+        mapsSection.appendChild(mapListEl);
+        const mapForm = el('div', { className: 'form' });
+        mapSourceInput = el('input', {
+            id: 'rb-map-source-input',
+            type: 'text',
+            placeholder: 'Source URL',
+            spellcheck: 'false',
+            autocomplete: 'off'
+        });
+        mapTargetInput = el('input', {
+            id: 'rb-map-target-input',
+            type: 'text',
+            placeholder: 'Target URL (optional)',
+            spellcheck: 'false',
+            autocomplete: 'off'
+        });
+        const mapAdd = el('button', { id: 'rb-map-add-btn', type: 'button' }, 'Add mapping');
+        mapAdd.addEventListener('click', () => {
+            const err = addUrlMap(mapSourceInput.value, mapTargetInput.value);
+            if (err) showModalError(err);
+            else {
+                mapSourceInput.value = '';
+                mapTargetInput.value = '';
+            }
+        });
+        mapSourceInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                mapAdd.click();
+            }
+        });
+        mapTargetInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                mapAdd.click();
+            }
+        });
+        mapForm.appendChild(mapSourceInput);
+        mapForm.appendChild(mapTargetInput);
+        mapForm.appendChild(mapAdd);
+        mapsSection.appendChild(mapForm);
+
+        modalError = el('div', { className: 'error', id: 'rb-modal-error' });
+
+        dialog.appendChild(head);
+        dialog.appendChild(modalStatus);
+        dialog.appendChild(sitesSection);
+        dialog.appendChild(mapsSection);
+        dialog.appendChild(modalError);
+        overlay.appendChild(dialog);
         root.appendChild(style);
-        root.appendChild(box);
+        root.appendChild(overlay);
+
+        host.addEventListener('keydown', (event) => {
+            event.stopPropagation();
+            if (event.key === 'Escape') hideModal();
+        });
         return host;
     }
 
-    function updateMenuLabels() {
+    function showModalError(message) {
+        if (modalError) modalError.textContent = message || '';
+    }
+
+    function refreshModalStatus() {
+        if (!modalStatus) return;
         const host = siteKey();
-        if (statusItem) {
-            statusItem.textContent = isSiteEnabled()
-                ? sessionBlocked + ' blocked this session (' + totalBlocked + ' total)'
-                : 'Disabled on ' + host;
-        }
-        if (toggleItem) {
-            toggleItem.textContent = isSiteEnabled()
-                ? 'Disable on ' + host
-                : 'Enable on ' + host;
+        if (isSiteEnabled()) {
+            modalStatus.textContent = sessionBlocked + ' blocked this session (' + totalBlocked + ' total)';
+        } else if (!isCurrentListed()) {
+            modalStatus.textContent = 'Not protecting ' + host + ' — add this site to enable';
+        } else {
+            modalStatus.textContent = 'Disabled on ' + host;
         }
     }
 
-    function cancelHideTimer() {
-        if (hideTimer) {
-            W.clearTimeout(hideTimer);
-            hideTimer = null;
+    function sitesForList() {
+        const current = siteKey();
+        const rows = sourceSites.map((site) => ({
+            host: site.host,
+            enabled: site.enabled !== false,
+            pending: false
+        }));
+        if (current && !rows.some((site) => hostMatches(current, site.host))) {
+            rows.unshift({ host: current, enabled: false, pending: true });
+        } else {
+            rows.sort((a, b) => {
+                const ac = hostMatches(current, a.host) ? 0 : 1;
+                const bc = hostMatches(current, b.host) ? 0 : 1;
+                return ac - bc;
+            });
+        }
+        return rows;
+    }
+
+    function refreshSiteList() {
+        if (!siteListEl) return;
+        while (siteListEl.firstChild) siteListEl.removeChild(siteListEl.firstChild);
+        const current = siteKey();
+        const listed = isCurrentListed();
+        if (addCurrentBar) {
+            if (listed) addCurrentBar.classList.remove('show');
+            else addCurrentBar.classList.add('show');
+            const hostLabel = addCurrentBar.querySelector('#rb-add-current-host');
+            if (hostLabel) hostLabel.textContent = current;
+        }
+        sitesForList().forEach((site) => {
+            const row = el('div', { className: 'row' });
+            row.setAttribute('data-rb-host', site.host);
+            if (site.pending) row.setAttribute('data-rb-pending', '1');
+            const toggle = el('input', {
+                type: 'checkbox',
+                className: 'toggle'
+            });
+            toggle.checked = !site.pending && site.enabled !== false;
+            toggle.setAttribute('aria-label', (toggle.checked ? 'Disable ' : 'Enable ') + site.host);
+            if (hostMatches(current, site.host)) toggle.id = 'rb-modal-toggle';
+            toggle.addEventListener('change', () => {
+                if (site.pending && !toggle.checked) return;
+                setHostEnabled(site.host, toggle.checked);
+            });
+            const name = el('div', { className: 'name' }, site.host);
+            if (hostMatches(current, site.host)) {
+                name.appendChild(el('span', { className: 'this' }, 'this site'));
+            }
+            const action = el('button', {
+                className: site.pending ? 'remove add' : 'remove',
+                type: 'button'
+            }, site.pending ? 'Add' : 'Remove');
+            if (site.pending) {
+                action.addEventListener('click', () => {
+                    const err = addSourceSite(site.host);
+                    if (err) showModalError(err);
+                });
+            } else {
+                action.addEventListener('click', () => removeSourceSite(site.host));
+            }
+            row.appendChild(toggle);
+            row.appendChild(name);
+            row.appendChild(action);
+            siteListEl.appendChild(row);
+        });
+    }
+
+    function refreshMapList() {
+        if (!mapListEl) return;
+        while (mapListEl.firstChild) mapListEl.removeChild(mapListEl.firstChild);
+        if (!urlMaps.length) {
+            mapListEl.appendChild(el('div', { className: 'empty' }, 'No mappings yet. Off-site navigations are still blocked.'));
+            return;
+        }
+        urlMaps.forEach((map, index) => {
+            const row = el('div', { className: 'row' });
+            row.setAttribute('data-rb-map-index', String(index));
+            const toggle = el('input', {
+                type: 'checkbox',
+                className: 'toggle',
+                'aria-label': 'Enable mapping ' + map.source
+            });
+            toggle.checked = map.enabled !== false;
+            toggle.addEventListener('change', () => setMapEnabled(index, toggle.checked));
+            const source = el('div', { className: 'name' }, map.source);
+            const arrow = el('div', { className: 'arrow' }, '→');
+            const target = el('div', { className: 'name' }, map.target || 'block');
+            const remove = el('button', { className: 'remove', type: 'button' }, 'Remove');
+            remove.addEventListener('click', () => removeUrlMap(index));
+            row.appendChild(toggle);
+            row.appendChild(source);
+            row.appendChild(arrow);
+            row.appendChild(target);
+            row.appendChild(remove);
+            mapListEl.appendChild(row);
+        });
+    }
+
+    function refreshModal() {
+        showModalError('');
+        refreshModalStatus();
+        refreshSiteList();
+        refreshMapList();
+    }
+
+    function hideModal() {
+        modalOpen = false;
+        if (modalEl) {
+            modalEl.style.setProperty('display', 'none', 'important');
+            modalEl.setAttribute('aria-hidden', 'true');
         }
     }
 
-    function scheduleHideMenu() {
-        cancelHideTimer();
-        hideTimer = W.setTimeout(() => {
-            hideTimer = null;
-            if (!pointerOnBadge && !pointerOnMenu && !dragging) hideMenu();
-        }, 180);
-    }
-
-    function hideMenu() {
-        cancelHideTimer();
-        menuOpen = false;
-        if (menuEl) menuEl.style.setProperty('display', 'none', 'important');
-    }
-
-    function showMenu() {
-        if (!menuEl || !badgeEl || dragging) return;
-        cancelHideTimer();
-        updateMenuLabels();
-        menuEl.style.setProperty('display', 'block', 'important');
-        const w = menuEl.offsetWidth || 220;
-        const h = menuEl.offsetHeight || 56;
-        const badgeLeft = parseFloat(badgeEl.style.left) || 0;
-        const badgeTop = parseFloat(badgeEl.style.top) || 0;
-        // Sit flush to the left of the disc (usual top-right spot) so the
-        // pointer can travel from icon to menu without a gap.
-        let left = badgeLeft - w - 4;
-        let top = badgeTop;
-        if (left < 4) {
-            left = badgeLeft;
-            top = badgeTop + ICON_SIZE + 4;
+    function showModal() {
+        if (!modalEl || !badgeEl || dragging) return;
+        refreshModal();
+        modalEl.style.setProperty('display', 'block', 'important');
+        modalEl.setAttribute('aria-hidden', 'false');
+        modalOpen = true;
+        if (siteInput && typeof siteInput.focus === 'function') {
+            try { siteInput.focus(); } catch (e) { /* ignore */ }
         }
-        if (left + w > W.innerWidth - 4) left = Math.max(4, W.innerWidth - w - 4);
-        if (top + h > W.innerHeight - 4) top = Math.max(4, W.innerHeight - h - 4);
-        if (left < 4) left = 4;
-        if (top < 4) top = 4;
-        menuEl.style.setProperty('left', Math.round(left) + 'px', 'important');
-        menuEl.style.setProperty('top', Math.round(top) + 'px', 'important');
-        menuEl.style.setProperty('right', 'auto', 'important');
-        menuEl.style.setProperty('bottom', 'auto', 'important');
-        menuOpen = true;
     }
-
-    function eventOnNode(event, node) {
-        if (!node) return false;
-        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-        if (event.target === node || path.indexOf(node) !== -1) return true;
-        try { return node.contains(event.target); } catch (e) { return false; }
-    }
-
-    function eventOnBadge(event) { return eventOnNode(event, badgeEl); }
-    function eventOnMenu(event) { return eventOnNode(event, menuEl); }
 
     function nativeAppend(parent, node) {
         if (!parent || !node || node.parentNode === parent) return;
@@ -856,7 +1269,7 @@
         if (!parent) return;
         try {
             if (badgeEl) nativeAppend(parent, badgeEl);
-            if (menuEl) nativeAppend(parent, menuEl);
+            if (modalEl) nativeAppend(parent, modalEl);
         } catch (e) {
             console.log('Redirect blocker: mount failed', e);
         }
@@ -872,12 +1285,12 @@
         if (existing && existing !== badgeEl) return; // another copy already mounted
         if (!badgeEl) {
             badgeEl = createBadgeElement();
-            menuEl = createMenuElement();
+            modalEl = createModalElement();
             syncBadgeVisual();
             enableBadgeUi();
             D.addEventListener('fullscreenchange', mountBadge);
             const keep = new MutationObserver(() => {
-                if ((badgeEl && !badgeEl.isConnected) || (menuEl && !menuEl.isConnected)) {
+                if ((badgeEl && !badgeEl.isConnected) || (modalEl && !modalEl.isConnected)) {
                     mountBadge();
                 }
             });

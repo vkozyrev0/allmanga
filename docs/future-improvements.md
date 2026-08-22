@@ -17,12 +17,12 @@ Ideas only. None of these are scheduled. The script works for the hijacks we hav
 - **Userscript-manager menu.** `GM_registerMenuCommand` (“Enable on this site”, “Reset position”) needs a grant and may fight `@inject-into page`. Worth a careful spike, not a drive-by.
 - **Shadow DOM for the disc itself.** The menu already uses an open shadow so page CSS cannot hide it. The disc is still a light-DOM `div` + SVG. A closed/open shadow would survive more aggressive reader styles.
 - **Fewer remounts.** The 20×500ms poll after load is a blunt fix for SPA hydrate. A single observer plus `fullscreenchange` might be enough now; measure on mkissa before deleting the poll.
-- **Do not steal hover on the reader.** The menu appears on hover. If that bothers people who park the cursor in the top-right, add a “click only” preference.
+- ~~**Do not steal hover on the reader.**~~ Done in 1.21: the settings modal opens on click, not hover.
 
 ## Install and maintenance
 
 - ~~**One public URL / keep `.js` and `.user.js` in sync.**~~ Done in 1.20: `npm run sync` copies the `.js` file and retargets the update URLs; a test fails if they drift.
-- ~~**Trim `@match` / `@include` duplicates.**~~ Done in 1.20: one `@match` pair per apex host plus `*.` .
+- ~~**Trim `@match` / `@include` duplicates.**~~ Done in 1.20, then 1.22 runs on all `http(s)` pages (`@noframes`) so the badge can add the current site from anywhere.
 - **Do not bring back a Chrome extension** unless AdGuard injection fails on a browser someone actually uses. Two artifacts was the worse product.
 - **Document Ctrl+Shift+R in the userscript `@description`.** People will keep using Ctrl+F5 and report a missing badge.
 

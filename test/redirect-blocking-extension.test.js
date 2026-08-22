@@ -525,46 +525,60 @@ test('keeps its distance from the anchored corner when the viewport shrinks', ()
   assert.strictEqual(badge.style.top, '566px');
 });
 
-// --- hover / click menu ----------------------------------------------------
+// --- click settings modal --------------------------------------------------
 
-function openIconMenu(window, badge) {
-  badge.dispatchEvent(new window.MouseEvent('mouseenter', { bubbles: true }));
-  return window.document.getElementById('rb-icon-menu');
-}
-
-function menuItem(window, id) {
-  const menu = window.document.getElementById('rb-icon-menu');
-  if (!menu) return null;
-  if (menu.shadowRoot) return menu.shadowRoot.getElementById(id);
-  return menu.querySelector('#' + id);
-}
-
-test('hovering the badge opens a per-site menu (no hide-icon item)', () => {
-  const { window } = load();
-  const badge = window.document.getElementById('rb-status-icon');
-  const menu = openIconMenu(window, badge);
-  assert.ok(menu, 'custom menu should be present');
-  assert.notStrictEqual(menu.style.display, 'none');
-  const toggle = menuItem(window, 'rb-menu-toggle');
-  assert.ok(toggle, 'toggle item should be in the menu');
-  assert.match(toggle.textContent, /Disable on allmanga\.to/i);
-  assert.strictEqual(menuItem(window, 'rb-menu-hide'), null);
-  assert.match(menuItem(window, 'rb-menu-status').textContent, /0 blocked this session/);
-});
-
-test('a left-click without dragging opens the menu', () => {
-  const { window } = load();
-  const badge = window.document.getElementById('rb-status-icon');
+function openSettings(window, badge) {
   badge.dispatchEvent(new window.MouseEvent('mousedown', {
     bubbles: true, button: 0, clientX: 990, clientY: 20,
   }));
   window.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }));
-  const menu = window.document.getElementById('rb-icon-menu');
-  assert.notStrictEqual(menu.style.display, 'none');
-  assert.match(menuItem(window, 'rb-menu-toggle').textContent, /Disable on allmanga\.to/i);
+  return window.document.getElementById('rb-icon-modal');
+}
+
+function modalRoot(window) {
+  const host = window.document.getElementById('rb-icon-modal');
+  if (!host) return null;
+  return host.shadowRoot || host;
+}
+
+function modalById(window, id) {
+  const root = modalRoot(window);
+  return root ? root.getElementById(id) : null;
+}
+
+function setCheckbox(box, on) {
+  box.checked = on;
+  box.dispatchEvent(new box.ownerDocument.defaultView.Event('change', { bubbles: true }));
+}
+
+test('hovering the badge does not open the settings modal', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  badge.dispatchEvent(new window.MouseEvent('mouseenter', { bubbles: true }));
+  const modal = window.document.getElementById('rb-icon-modal');
+  assert.ok(modal, 'settings modal host should be present');
+  assert.strictEqual(modal.style.display, 'none');
+  assert.strictEqual(window.document.getElementById('rb-icon-menu'), null);
 });
 
-test('right-click does not open the custom menu', () => {
+test('a left-click without dragging opens the settings modal', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const modal = openSettings(window, badge);
+  assert.ok(modal);
+  assert.notStrictEqual(modal.style.display, 'none');
+  assert.ok(modalById(window, 'rb-modal-toggle'), 'current-site toggle should be in the modal');
+  assert.match(modalById(window, 'rb-modal-status').textContent, /0 blocked this session/);
+  assert.ok(modalById(window, 'rb-site-add-input'));
+  assert.ok(modalById(window, 'rb-map-source-input'));
+  assert.ok(modalById(window, 'rb-map-target-input'));
+  const hosts = [...modalById(window, 'rb-site-list').querySelectorAll('[data-rb-host]')]
+    .map((row) => row.getAttribute('data-rb-host'));
+  assert.deepStrictEqual(hosts, ['allmanga.to', 'mkissa.to', 'mkissa.net']);
+  assert.ok(!modalById(window, 'rb-add-current').className.split(/\s+/).includes('show'));
+});
+
+test('right-click does not open the settings modal', () => {
   const { window } = load();
   const badge = window.document.getElementById('rb-status-icon');
   const ev = new window.MouseEvent('contextmenu', {
@@ -572,9 +586,9 @@ test('right-click does not open the custom menu', () => {
   });
   badge.dispatchEvent(ev);
   assert.strictEqual(ev.defaultPrevented, true);
-  const menu = window.document.getElementById('rb-icon-menu');
-  assert.ok(menu);
-  assert.strictEqual(menu.style.display, 'none');
+  const modal = window.document.getElementById('rb-icon-modal');
+  assert.ok(modal);
+  assert.strictEqual(modal.style.display, 'none');
 });
 
 test('disable on this site pauses blocking and switches to the gray broken-chain icon', () => {
@@ -585,10 +599,10 @@ test('disable on this site pauses blocking and switches to the gray broken-chain
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
   assert.strictEqual(badge.querySelectorAll('#rb-glyph path').length, 3);
   assert.strictEqual(badge.querySelector('#rb-glyph path[data-rb-slash]'), null);
-  openIconMenu(window, badge);
-  const toggle = menuItem(window, 'rb-menu-toggle');
-  assert.match(toggle.textContent, /Disable on allmanga\.to/i);
-  toggle.click();
+  openSettings(window, badge);
+  const toggle = modalById(window, 'rb-modal-toggle');
+  assert.strictEqual(toggle.checked, true);
+  setCheckbox(toggle, false);
   assert.deepStrictEqual(
     JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
     ['allmanga.to']
@@ -611,10 +625,10 @@ test('enable on this site restores blocking and the orange unbroken-chain icon',
   assert.match(badge.getAttribute('aria-label'), /disabled on allmanga\.to/i);
   assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'broken');
   assert.strictEqual(badge.querySelector('#rb-disc').getAttribute('fill'), '#495057');
-  openIconMenu(window, badge);
-  const toggle = menuItem(window, 'rb-menu-toggle');
-  assert.match(toggle.textContent, /Enable on allmanga\.to/i);
-  toggle.click();
+  openSettings(window, badge);
+  const toggle = modalById(window, 'rb-modal-toggle');
+  assert.strictEqual(toggle.checked, false);
+  setCheckbox(toggle, true);
   assert.deepStrictEqual(
     JSON.parse(window.localStorage.getItem('rb-disabled-hosts')),
     []
@@ -650,8 +664,8 @@ test('legacy rb-enabled=0 migrates to disabling the current host', () => {
 test('disabling on allmanga.to does not disable mkissa.to', () => {
   const manga = load();
   const badge = manga.window.document.getElementById('rb-status-icon');
-  openIconMenu(manga.window, badge);
-  menuItem(manga.window, 'rb-menu-toggle').click();
+  openSettings(manga.window, badge);
+  setCheckbox(modalById(manga.window, 'rb-modal-toggle'), false);
   const saved = manga.window.localStorage.getItem('rb-disabled-hosts');
 
   const kiss = load({ url: 'https://mkissa.to/', storage: { 'rb-disabled-hosts': saved } });
@@ -662,11 +676,151 @@ test('disabling on allmanga.to does not disable mkissa.to', () => {
   assert.strictEqual(kissBadge.querySelector('#rb-disc').getAttribute('fill'), '#f76707');
 });
 
-test('menu on mkissa.to names that host', () => {
+test('modal on mkissa.to lists that host as this site', () => {
   const { window } = load({ url: 'https://mkissa.to/' });
   const badge = window.document.getElementById('rb-status-icon');
-  openIconMenu(window, badge);
-  assert.match(menuItem(window, 'rb-menu-toggle').textContent, /Disable on mkissa\.to/i);
+  openSettings(window, badge);
+  const row = modalById(window, 'rb-site-list').querySelector('[data-rb-host="mkissa.to"]');
+  assert.ok(row);
+  assert.match(row.textContent, /this site/i);
+  assert.strictEqual(modalById(window, 'rb-modal-toggle').checked, true);
+});
+
+test('adds a source site from the modal and treats it as family', () => {
+  const { window, openCalls } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-site-add-input').value = 'https://www.example-manga.com/read/1';
+  modalById(window, 'rb-site-add-btn').click();
+  const hosts = [...modalById(window, 'rb-site-list').querySelectorAll('[data-rb-host]')]
+    .map((row) => row.getAttribute('data-rb-host'));
+  assert.ok(hosts.includes('example-manga.com'));
+  assert.strictEqual(window.open('https://example-manga.com/manga/1'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('rejects a duplicate source site', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-site-add-input').value = 'allmanga.to';
+  modalById(window, 'rb-site-add-btn').click();
+  assert.match(modalById(window, 'rb-modal-error').textContent, /already in the list/i);
+});
+
+test('removing the current source site turns protection off until it is added again', () => {
+  const { window, openCalls } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  const row = modalById(window, 'rb-site-list').querySelector('[data-rb-host="allmanga.to"]');
+  row.querySelector('button.remove').click();
+  assert.strictEqual(badge.getAttribute('data-rb-listed'), '0');
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '0');
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+  modalById(window, 'rb-add-current-btn').click();
+  assert.strictEqual(badge.getAttribute('data-rb-listed'), '1');
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '1');
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
+});
+
+test('removing a sister site stops treating it as family', () => {
+  const { window, openCalls } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  const row = modalById(window, 'rb-site-list').querySelector('[data-rb-host="mkissa.to"]');
+  row.querySelector('button.remove').click();
+  assert.strictEqual(
+    modalById(window, 'rb-site-list').querySelector('[data-rb-host="mkissa.to"]'),
+    null
+  );
+  assert.strictEqual(window.open('https://mkissa.to/manga/1'), null);
+  assert.strictEqual(openCalls.length, 0);
+});
+
+test('disabling a sister site blocks navigation to it without pausing this site', () => {
+  const { window, openCalls } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  const row = modalById(window, 'rb-site-list').querySelector('[data-rb-host="mkissa.to"]');
+  setCheckbox(row.querySelector('input.toggle'), false);
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '1');
+  assert.strictEqual(window.open('https://mkissa.to/manga/1'), null);
+  assert.strictEqual(openCalls.length, 0);
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
+});
+
+test('adds a source-to-target mapping and rewrites matching navigations', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-map-source-input').value = 'ads.example';
+  modalById(window, 'rb-map-target-input').value = 'allmanga.to';
+  modalById(window, 'rb-map-add-btn').click();
+  window.history.pushState({}, '', 'https://ads.example/manga/page?q=1#h');
+  assert.strictEqual(window.location.href, 'https://allmanga.to/manga/page?q=1#h');
+});
+
+test('a mapping with a blank target blocks the source host', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-map-source-input').value = 'https://youtu-chan.com';
+  modalById(window, 'rb-map-target-input').value = '';
+  modalById(window, 'rb-map-add-btn').click();
+  const before = window.location.href;
+  window.history.pushState({}, '', 'https://youtu-chan.com/manga/page');
+  assert.strictEqual(window.location.href, before);
+});
+
+test('a mapping to a full target URL replaces the destination', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-map-source-input').value = 'isekai2nd.com';
+  modalById(window, 'rb-map-target-input').value =
+    'https://allmanga.to/manga/fixed/chapter-1';
+  modalById(window, 'rb-map-add-btn').click();
+  window.history.pushState({}, '', 'https://isekai2nd.com/20-recommended');
+  assert.strictEqual(window.location.href, 'https://allmanga.to/manga/fixed/chapter-1');
+});
+
+test('disabled mappings are ignored', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-map-source-input').value = 'ads.example';
+  modalById(window, 'rb-map-target-input').value = 'allmanga.to';
+  modalById(window, 'rb-map-add-btn').click();
+  const row = modalById(window, 'rb-map-list').querySelector('[data-rb-map-index="0"]');
+  setCheckbox(row.querySelector('input.toggle'), false);
+  assert.strictEqual(window.open('https://ads.example/go'), null);
+});
+
+test('Escape closes the settings modal', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const modal = openSettings(window, badge);
+  assert.notStrictEqual(modal.style.display, 'none');
+  window.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape' }));
+  assert.strictEqual(modal.style.display, 'none');
+});
+
+test('close button hides the settings modal', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const modal = openSettings(window, badge);
+  modalById(window, 'rb-modal-close').click();
+  assert.strictEqual(modal.style.display, 'none');
+});
+
+test('a second click on the badge closes the settings modal', () => {
+  const { window } = load();
+  const badge = window.document.getElementById('rb-status-icon');
+  const modal = openSettings(window, badge);
+  assert.notStrictEqual(modal.style.display, 'none');
+  openSettings(window, badge);
+  assert.strictEqual(modal.style.display, 'none');
 });
 
 test('.user.js is the main script with user.js update URLs', () => {
@@ -687,6 +841,65 @@ test('.user.js is the main script with user.js update URLs', () => {
 
 test('userscript header has no leftover @include lines', () => {
   assert.doesNotMatch(SCRIPT_SOURCE, /@include/);
+});
+
+test('userscript runs on all http(s) pages and skips iframes', () => {
+  assert.match(SCRIPT_SOURCE, /@match\s+http:\/\/\*\/\*/);
+  assert.match(SCRIPT_SOURCE, /@match\s+https:\/\/\*\/\*/);
+  assert.match(SCRIPT_SOURCE, /@noframes/);
+});
+
+test('shows the badge on an unlisted site without blocking', () => {
+  const { window, openCalls } = load({ url: 'https://example.com/page' });
+  const badge = window.document.getElementById('rb-status-icon');
+  assert.ok(badge, 'badge should appear on sites that are not in the source list');
+  assert.strictEqual(badge.getAttribute('data-rb-listed'), '0');
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '0');
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'broken');
+  assert.match(badge.getAttribute('aria-label'), /idle on example\.com/i);
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
+});
+
+test('adding the current unlisted site from the modal enables blocking', () => {
+  const { window, openCalls } = load({ url: 'https://example.com/page' });
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  assert.match(modalById(window, 'rb-modal-status').textContent, /Not protecting example\.com/);
+  assert.ok(modalById(window, 'rb-add-current').className.split(/\s+/).includes('show'));
+  assert.strictEqual(modalById(window, 'rb-add-current-host').textContent, 'example.com');
+  const pending = modalById(window, 'rb-site-list').querySelector('[data-rb-host="example.com"]');
+  assert.ok(pending);
+  assert.strictEqual(pending.getAttribute('data-rb-pending'), '1');
+  assert.strictEqual(modalById(window, 'rb-modal-toggle').checked, false);
+  modalById(window, 'rb-add-current-btn').click();
+  assert.strictEqual(badge.getAttribute('data-rb-listed'), '1');
+  assert.strictEqual(badge.getAttribute('data-rb-enabled'), '1');
+  assert.strictEqual(badge.getAttribute('data-rb-glyph'), 'unbroken');
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
+  assert.strictEqual(openCalls.length, 0);
+  assert.ok(!modalById(window, 'rb-add-current').className.split(/\s+/).includes('show'));
+});
+
+test('checking the current-site toggle on an unlisted host adds it', () => {
+  const { window, openCalls } = load({ url: 'https://other-manga.test/' });
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  setCheckbox(modalById(window, 'rb-modal-toggle'), true);
+  assert.strictEqual(badge.getAttribute('data-rb-listed'), '1');
+  assert.strictEqual(window.open('https://youtu-chan.com/ad'), null);
+  assert.strictEqual(openCalls.length, 0);
+});
+
+test('adding another URL from an unlisted site treats it as family once this site is enabled', () => {
+  const { window, openCalls } = load({ url: 'https://example.com/' });
+  const badge = window.document.getElementById('rb-status-icon');
+  openSettings(window, badge);
+  modalById(window, 'rb-add-current-btn').click();
+  modalById(window, 'rb-site-add-input').value = 'https://family.example/path';
+  modalById(window, 'rb-site-add-btn').click();
+  assert.strictEqual(window.open('https://family.example/manga/1'), 'OPENED');
+  assert.strictEqual(openCalls.length, 1);
 });
 
 test('right-click does not start a drag', () => {
